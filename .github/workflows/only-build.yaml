@@ -8,19 +8,21 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14  # 使用最新macOS runner（支持Apple Silicon，或Intel通过Rosetta兼容）
+    runs-on: macos-14  # 使用最新macOS runner
     steps:
       - name: 检查源码
         uses: actions/checkout@v4
 
       - name: 安装Homebrew并更新
         run: |
-          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          if ! command -v brew &> /dev/null; then
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
           brew update && brew upgrade
 
-      - name: 安装静态编译依赖（必需+可选）
+      - name: 安装静态编译依赖
         run: |
-          # 安装依赖时优先启用静态库（部分库需手动指定）
+          # 安装依赖时优先启用静态库
           brew install aom dav1d fontconfig freetype frei0r harfbuzz lame libass libvorbis libvpx libx11 libxcb opus sdl2 snappy theora x264 x265 xz libarchive libogg libsamplerate
           brew install aribb24 chromaprint fdk-aac game-music-emu jack jpeg-xl libaribcaption libbluray libbs2b libcaca libdvdnav libdvdread libgsm libmodplug libopenmpt libplacebo librist librsvg libsoxr libssh libtensorflow libvidstab libvmaf libxml2 openal-soft opencore-amr openh264 openjpeg openssl openvino rav1e rtmpdump rubberband speex srt svt-av1 tesseract two-lame webp xvid zeromq zimg
           # 安装编译工具
@@ -29,25 +31,41 @@ jobs:
       - name: 下载FFmpeg源码并应用补丁
         run: |
           mkdir -p ~/ffmpeg-build && cd ~/ffmpeg-build
-          curl -O https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz
+          
+          # 下载FFmpeg源码
+          echo "Downloading FFmpeg source..."
+          curl -fL https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz -o ffmpeg-7.1.1.tar.xz || { echo "Failed to download FFmpeg"; exit 1; }
           tar -xf ffmpeg-7.1.1.tar.xz && cd ffmpeg-7.1.1
-          # 应用补丁
-          curl -O https://github.com/FFmpeg/FFmpeg/commit/d1ed5c06e3edc5f2b5f3664c80121fa55b0baa95.patch?full_index=1 -o svt-av1.patch
-          patch -p1 < svt-av1.patch
-          curl -O https://gitlab.archlinux.org/archlinux/packaging/packages/ffmpeg/-/raw/5670ccd86d3b816f49ebc18cab878125eca2f81f/add-av_stream_get_first_dts-for-chromium.patch -o qtwebengine.patch
-          patch -p1 < qtwebengine.patch
+          
+          # 应用SVT-AV1补丁
+          echo "Downloading and applying SVT-AV1 patch..."
+          curl -fL https://github.com/FFmpeg/FFmpeg/commit/d1ed5c06e3edc5f2b5f3664c80121fa55b0baa95.patch?full_index=1 -o svt-av1.patch || { echo "Failed to download SVT-AV1 patch"; exit 1; }
+          if [ -f "svt-av1.patch" ]; then
+            patch -p1 < svt-av1.patch || { echo "Failed to apply SVT-AV1 patch"; exit 1; }
+          else
+            echo "SVT-AV1 patch file not found"; exit 1;
+          fi
+          
+          # 应用qtwebengine补丁
+          echo "Downloading and applying qtwebengine patch..."
+          curl -fL https://gitlab.archlinux.org/archlinux/packaging/packages/ffmpeg/-/raw/5670ccd86d3b816f49ebc18cab878125eca2f81f/add-av_stream_get_first_dts-for-chromium.patch -o qtwebengine.patch || { echo "Failed to download qtwebengine patch"; exit 1; }
+          if [ -f "qtwebengine.patch" ]; then
+            patch -p1 < qtwebengine.patch || { echo "Failed to apply qtwebengine patch"; exit 1; }
+          else
+            echo "qtwebengine patch file not found"; exit 1;
+          fi
 
       - name: 静态编译配置
         run: |
           cd ~/ffmpeg-build/ffmpeg-7.1.1
-          # 静态编译核心参数（禁用动态库，启用静态库）
+          # 静态编译核心参数
           ./configure \
             --prefix=/usr/local/ffmpeg-static \
-            --enable-static \          # 启用静态编译
-            --disable-shared \         # 禁用动态库
+            --enable-static \
+            --disable-shared \
             --cc=gcc \
-            --host-cflags="-arch arm64 -I/usr/local/include" \  # 适配Apple Silicon
-            --host-ldflags="-arch arm64 -L/usr/local/lib" \
+            --host-cflags="-arch arm64 -I/usr/local/include -I$(brew --prefix)/include" \
+            --host-ldflags="-arch arm64 -L/usr/local/lib -L$(brew --prefix)/lib" \
             --enable-gpl \
             --enable-nonfree \
             --enable-neon \
@@ -55,7 +73,7 @@ jobs:
             --enable-audiotoolbox \
             --enable-videotoolbox \
             --enable-openal \
-            # 必需模块（静态链接）
+            # 必需模块
             --enable-libaom \
             --enable-libdav1d \
             --enable-libharfbuzz \
@@ -72,7 +90,7 @@ jobs:
             --enable-frei0r \
             --enable-libass \
             --enable-demuxer=dash \
-            # 可选模块（全功能静态链接）
+            # 可选模块
             --enable-chromaprint \
             --enable-libaribb24 \
             --enable-libaribcaption \
@@ -121,7 +139,7 @@ jobs:
         run: |
           cd ~/ffmpeg-build/ffmpeg-7.1.1
           make install  # 安装到--prefix指定路径
-          # 打包静态编译产物（包含ffmpeg、ffprobe等）
+          # 打包静态编译产物
           cd /usr/local/ffmpeg-static
           tar -czf ffmpeg-static-macos-arm64.tar.gz *
 
