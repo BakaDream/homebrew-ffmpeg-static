@@ -2,27 +2,112 @@ name: FF FFmpeg Static Build (macOS Apple Silicon)
 
 # 触发条件：手动触发 + 推送到main分支时触发
 on:
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch: # 手动触发
   push:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   build:
-    runs-on: macos-14  # 使用最新macOS runner（支持Apple Silicon）
+    runs-on: macos-14 # 使用最新macOS runner（支持Apple Silicon）
     steps:
-      - name: 检查源码
-        uses: actions/checkout@v4
+      - name: Checkout 自己
+        uses: actions/checkout@v5
 
-      - name: 安装Homebrew并更新
+      - name: 缓存HomeBrew 依赖
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/homebrew/Cellar
+            /opt/homebrew/lib
+            /opt/homebrew/include
+            /opt/homebrew/bin
+          key: ${{ runner.os }}-homebrew-${{ hashFiles('.github/workflows/only-build.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-homebrew-
+
+      - name: 检查并更新Homebrew
         run: |
-          if ! command -v brew &> /dev/null; then
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          fi
-          brew tap homebrew-ffmpeg/ffmpeg
           brew update && brew upgrade
-          brew install homebrew-ffmpeg/ffmpeg/ffmpeg --HEAD
+
+      - name: checkout ffmpeg源码
+        uses: actions/checkout@v5
+        with:
+          repository: FFmpeg/FFmpeg
+          ref: master
+          persist-credentials: false
+          path: ffmpeg-source
+
+      - name: 安装相关依赖
+        run: |
+          brew install pkgconf
+          # 安装必要依赖
+          brew install aom dav1d fontconfig freetype frei0r harfbuzz lame libass libvorbis libvpx libx11 libxcb opus sdl2 snappy theora x264 x265 xz
+          # 安装macos特有的依赖
+          brew install libarchive libogg libsamplerate
+      - name: 配置编译configure
+        run: |
+          mkdir /opt/homebrew/ffmpeg-build
+
+          ./configure \
+          --prefix=/opt/homebrew/ffmpeg-build \
+          --enable-static --disable-shared \
+          --cc=clang \
+          --enable-gpl \
+          --enable-libaom \
+          --enable-libdav1d \ 
+          --enable-libharfbuzz \  
+          --enable-libmp3lame \
+          --enable-libopus \
+          --enable-libsnappy \
+          --enable-libtheora \ 
+          --enable-libvorbis \
+          --enable-libvpx \
+          --enable-libx264 \ 
+          --enable-libx265 \
+          --enable-libfontconfig \  
+          --enable-libfreetype \
+          --enable-frei0r \ 
+          --enable-libass \
+          --enable-demuxer=dash \
+          --enable-neon \
+          --enable-opencl \
+          --enable-audiotoolbox \
+          --enable-videotoolbox \
+          --disable-htmlpages
+
+      - name: 编译安装
+        run: |
+          make -j$(sysctl -n hw.logicalcpu)
+          make install
+          make alltools
+
+      - name: 安装工具到bin目录和共享目录
+        run: |
+          # 定义目标路径（与configure中的--prefix对应）
+          PREFIX="/opt/homebrew/ffmpeg-build"
+          # 1. 安装tools目录下的可执行文件到bin目录（对应 bin.install ...）
+          # 查找tools目录下所有可执行文件并复制到bin目录
+          find ffmpeg-source/tools -type f -executable -print0 | xargs -0 -I {} cp {} "$PREFIX/bin/"
+          # 2. 安装python工具目录到共享目录（对应 pkgshare.install ...）
+          # 创建共享目录（通常是prefix/share/ffmpeg）
+          mkdir -p "$PREFIX/share/ffmpeg"
+          # 复制tools/python目录到共享目录
+          cp -r ffmpeg-source/tools/python "$PREFIX/share/ffmpeg/"
+          # 确保权限正确
+          chmod -R 755 "$PREFIX/bin/"* "$PREFIX/share/ffmpeg/python"
+
 
       - name: 测试
         run: |
-          ffmpeg -version
-
+          # 测试ffmpeg是否安装成功
+          /opt/homebrew/ffmpeg-build/bin/ffmpeg -version
+          # 测试工具是否安装成功（以一个示例工具为例，根据实际工具名调整）
+          if [ -f "/opt/homebrew/ffmpeg-build/bin/qt-faststart" ]; then
+            echo "工具安装成功: qt-faststart"
+            /opt/homebrew/ffmpeg-build/bin/qt-faststart -h
+          fi
+          # 测试Python工具目录是否存在
+          if [ -d "/opt/homebrew/ffmpeg-build/share/ffmpeg/python" ]; then
+            echo "Python工具目录安装成功"
+            ls -l "/opt/homebrew/ffmpeg-build/share/ffmpeg/python"
+          fi
