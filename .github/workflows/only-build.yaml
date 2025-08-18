@@ -97,8 +97,8 @@ jobs:
           fi
       - name: 打包构建结果
         run: |
-          # 创建打包目录
-          mkdir -p $HOME/ffmpeg-release
+          # 在当前工作目录下创建打包目录（避免使用$HOME导致路径问题）
+          mkdir -p ${{ github.workspace }}/ffmpeg-release
           
           # 获取FFmpeg版本信息
           FFMPEG_VERSION=$(/opt/homebrew/ffmpeg-build/bin/ffmpeg -version | head -n 1 | awk '{print $3}' | cut -d '-' -f 1)
@@ -108,19 +108,20 @@ jobs:
           PACKAGE_NAME="ffmpeg-${FFMPEG_VERSION}-macos-arm64-${TIMESTAMP}.zip"
           
           # 复制构建结果到打包目录
-          cp -R /opt/homebrew/ffmpeg-build/* $HOME/ffmpeg-release/
+          cp -R /opt/homebrew/ffmpeg-build/* ${{ github.workspace }}/ffmpeg-release/
           
-          # 打包
-          cd $HOME
+          # 打包（在当前工作目录执行，确保路径干净）
+          cd ${{ github.workspace }}
           zip -r $PACKAGE_NAME ffmpeg-release/
           
           # 输出打包信息
           echo "打包完成: $PACKAGE_NAME"
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
-          
+
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PACKAGE_NAME }}
-          path: ${{ github.workspace }}/../${{ env.PACKAGE_NAME }}
-          retention-days: 30 # 保存30天 
+          # 直接使用当前工作目录下的文件，无需../
+          path: ${{ github.workspace }}/${{ env.PACKAGE_NAME }}
+          retention-days: 30
