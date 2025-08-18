@@ -22,7 +22,7 @@ jobs:
         # Install codec libraries (quiet mode)
         brew install --quiet x264 x265 lame opus libvorbis libvpx webp fdk-aac freetype fontconfig
 
-        brew intall libxcb
+        brew install --quiet libxcb
         
         # Link any unlinked packages (suppress output)
         brew link --overwrite nasm yasm autoconf automake libtool x264 x265 lame opus libvorbis libvpx webp fdk-aac > /dev/null 2>&1 || true
