@@ -18,10 +18,12 @@ jobs:
       run: |
         brew update > /dev/null 2>&1
         brew install --quiet pkg-config nasm yasm cmake autoconf automake libtool
-        brew install --quiet x264 x265 lame opus libvorbis libvpx webp fdk-aac freetype fontconfig
-        brew link --overwrite nasm yasm autoconf automake libtool x264 x265 lame opus libvorbis libvpx webp fdk-aac > /dev/null 2>&1 || true
-        HOMEBREW_PREFIX=$(brew --prefix)
-        export PKG_CONFIG_PATH="$HOMEBREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+        brew install --quiet x264 x265 lame opus libvorbis libvpx webp fdk-aac freetype fontconfig \
+          libbluray openjpeg libass theora snappy aom vidstab zimg svt-av1 kvazaar harfbuzz
+        brew link --overwrite nasm yasm autoconf automake libtool x264 x265 lame opus libvorbis libvpx webp fdk-aac \
+          freetype fontconfig libbluray openjpeg libass theora snappy aom vidstab zimg svt-av1 kvazaar harfbuzz \
+          > /dev/null 2>&1 || true
+        export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
 
     - name: Download FFmpeg source
       run: |
@@ -32,32 +34,46 @@ jobs:
           rm ffmpeg.tar.bz2
         fi
 
-    - name: Configure FFmpeg for Apple Silicon (static, no X11)
+    - name: Configure FFmpeg for Apple Silicon
       working-directory: ffmpeg-src
       run: |
+        export SOURCE="$(pwd)/build"
+        mkdir -p $SOURCE
         ./configure \
-          --prefix=/usr/local \
-          --target-os=darwin \
+          --prefix=${SOURCE} \
+          --extra-cflags="-fno-stack-check" \
           --arch=arm64 \
-          --disable-shared \
-          --enable-static \
-          --disable-ffplay \
-          --disable-x11 \
-          --disable-opengl \
-          --disable-doc \
-          --disable-debug \
+          --cc=/usr/bin/clang \
           --enable-gpl \
-          --enable-nonfree \
-          --enable-videotoolbox \
+          --enable-libbluray \
+          --enable-libopenjpeg \
+          --enable-libopus \
+          --enable-libmp3lame \
           --enable-libx264 \
           --enable-libx265 \
           --enable-libvpx \
-          --enable-libfdk-aac \
-          --enable-libopus \
-          --enable-libvorbis \
           --enable-libwebp \
-          --enable-libmp3lame \
-          --enable-avfilter
+          --enable-libass \
+          --enable-libfreetype \
+          --enable-fontconfig \
+          --enable-libtheora \
+          --enable-libvorbis \
+          --enable-libsnappy \
+          --enable-libaom \
+          --enable-libvidstab \
+          --enable-libzimg \
+          --enable-libsvtav1 \
+          --enable-libkvazaar \
+          --enable-libharfbuzz \
+          --pkg-config-flags=--static \
+          --enable-ffplay \
+          --enable-postproc \
+          --enable-neon \
+          --enable-runtime-cpudetect \
+          --disable-indev=qtkit \
+          --disable-indev=x11grab_xcb \
+          --disable-shared \
+          --enable-static
 
     - name: Build FFmpeg
       working-directory: ffmpeg-src
@@ -68,6 +84,7 @@ jobs:
         mkdir -p release
         cp ffmpeg-src/ffmpeg release/
         cp ffmpeg-src/ffprobe release/
+        cp ffmpeg-src/ffplay release/
         cd release
         tar -czf ../ffmpeg-apple-silicon-native-${{ github.ref_name }}.tar.gz *
         cd ..
