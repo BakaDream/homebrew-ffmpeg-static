@@ -18,54 +18,11 @@ jobs:
           if ! command -v brew &> /dev/null; then
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
           fi
+          brew tap homebrew-ffmpeg/ffmpeg
           brew update && brew upgrade
+          brew install homebrew-ffmpeg/ffmpeg/ffmpeg --HEAD
 
-      - name: 安装静态编译依赖（必需+可选）
+      - name: 测试
         run: |
-          brew install automake fdk-aac git lame libass libtool libvorbis libvpx \opus sdl shtool texi2html theora wget x264 x265 xvid nasm
+          ffmpeg --version
 
-
-      - name: 下载FFmpeg源码并应用补丁
-        run: |
-          mkdir -p ~/ffmpeg-build && cd ~/ffmpeg-build
-          
-          # 下载FFmpeg源码
-          echo "Downloading FFmpeg source..."
-          git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg
-           cd ffmpeg
-          
-
-      - name: 静态编译配置（含openal-soft路径设置）
-        run: |
-          cd ~/ffmpeg-build/ffmpeg
-          
-          
-          # 静态编译核心参数
-          ./configure  --prefix=/usr/local/ffmpeg-static --enable-gpl --enable-nonfree --enable-libass \
-          --enable-libfdk-aac --enable-libfreetype --enable-libmp3lame \
-          --enable-libtheora --enable-libvorbis --enable-libvpx --enable-libx264 --enable-libx265 --enable-libopus --enable-libxvid \
-          --samples=fate-suite/
-          --enable-static \
-          --disable-shared \
-          --extra-ldflags="-L/opt/homebrew/lib" \
-          --extra-cflags="-I/opt/homebrew/include"
-
-      - name: 编译FFmpeg
-        run: |
-          cd ~/ffmpeg-build/ffmpeg
-          make -j$(sysctl -n hw.ncpu)  # 利用所有CPU核心加速编译
-
-      - name: 安装并打包产物
-        run: |
-          cd ~/ffmpeg-build/ffmpeg
-          make install  # 安装到--prefix指定路径
-          # 打包静态编译产物（包含ffmpeg、ffprobe等）
-          cd /usr/local/ffmpeg-static
-          tar -czf ffmpeg-static-macos-arm64.tar.gz *
-
-      - name: 上传到Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ffmpeg-static-macos-arm64
-          path: /usr/local/ffmpeg-static/ffmpeg-static-macos-arm64.tar.gz
-          retention-days: 30  # 产物保留30天
