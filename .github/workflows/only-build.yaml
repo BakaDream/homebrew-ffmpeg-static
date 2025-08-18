@@ -1,0 +1,354 @@
+name: Build Full FFmpeg macOS ARM64
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      BUILD_DIR: ${{ runner.temp }}/ffmpeg_build
+      INSTALL_DIR: ${{ runner.workspace }}/ffmpeg_output
+      PKG_CONFIG_PATH: ${{ runner.temp }}/ffmpeg_build/lib/pkgconfig
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Install Homebrew dependencies
+      run: |
+        brew update
+        brew install cmake automake autoconf libtool pkg-config wget git yasm nasm
+
+    - name: Create directories
+      run: mkdir -p $BUILD_DIR $INSTALL_DIR
+
+    - name: Cache compiled libraries
+      uses: actions/cache@v3
+      id: cache-libs
+      with:
+        path: $BUILD_DIR
+        key: ffmpeg-deps-macos-arm64
+
+    - name: Build all dependencies
+      if: steps.cache-libs.outputs.cache-hit != 'true'
+      run: |
+        cd $BUILD_DIR
+
+        #########################
+        # NASM
+        #########################
+        wget https://www.nasm.us/pub/nasm/releasebuilds/2.15.05/nasm-2.15.05.tar.gz
+        tar xzf nasm-2.15.05.tar.gz
+        cd nasm-2.15.05
+        ./configure --prefix=$INSTALL_DIR
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # YASM
+        #########################
+        wget http://www.tortall.net/projects/yasm/releases/yasm-1.3.0.tar.gz
+        tar xzf yasm-1.3.0.tar.gz
+        cd yasm-1.3.0
+        ./configure --prefix=$INSTALL_DIR
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # libiconv
+        #########################
+        wget https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.16.tar.gz
+        tar xzf libiconv-1.16.tar.gz
+        cd libiconv-1.16
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # zlib
+        #########################
+        wget https://zlib.net/zlib-1.2.13.tar.gz
+        tar xzf zlib-1.2.13.tar.gz
+        cd zlib-1.2.13
+        ./configure --prefix=$INSTALL_DIR
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # xz (liblzma)
+        #########################
+        wget https://tukaani.org/xz/xz-5.4.2.tar.gz
+        tar xzf xz-5.4.2.tar.gz
+        cd xz-5.4.2
+        ./configure --prefix=$INSTALL_DIR --disable-shared
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # expat
+        #########################
+        wget https://github.com/libexpat/libexpat/releases/download/R_2_5_0/expat-2.5.0.tar.gz
+        tar xzf expat-2.5.0.tar.gz
+        cd expat-2.5.0
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # enca
+        #########################
+        wget https://dl.cihar.com/enca/enca-1.19.tar.gz
+        tar xzf enca-1.19.tar.gz
+        cd enca-1.19
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # fribidi
+        #########################
+        wget https://github.com/fribidi/fribidi/releases/download/v1.0.12/fribidi-1.0.12.tar.xz
+        tar xf fribidi-1.0.12.tar.xz
+        cd fribidi-1.0.12
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # freetype
+        #########################
+        wget https://download.savannah.gnu.org/releases/freetype/freetype-2.12.1.tar.gz
+        tar xzf freetype-2.12.1.tar.gz
+        cd freetype-2.12.1
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # fontconfig
+        #########################
+        wget https://www.freedesktop.org/software/fontconfig/release/fontconfig-2.14.2.tar.gz
+        tar xzf fontconfig-2.14.2.tar.gz
+        cd fontconfig-2.14.2
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static --with-add-fonts=/System/Library/Fonts
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # libogg
+        #########################
+        wget https://downloads.xiph.org/releases/ogg/libogg-1.3.5.tar.gz
+        tar xzf libogg-1.3.5.tar.gz
+        cd libogg-1.3.5
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # libvorbis
+        #########################
+        wget https://downloads.xiph.org/releases/vorbis/libvorbis-1.3.7.tar.gz
+        tar xzf libvorbis-1.3.7.tar.gz
+        cd libvorbis-1.3.7
+        ./configure --prefix=$INSTALL_DIR --with-ogg=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # opus
+        #########################
+        wget https://archive.mozilla.org/pub/opus/opus-1.3.1.tar.gz
+        tar xzf opus-1.3.1.tar.gz
+        cd opus-1.3.1
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # libtheora
+        #########################
+        wget https://downloads.xiph.org/releases/theora/libtheora-1.1.1.tar.gz
+        tar xzf libtheora-1.1.1.tar.gz
+        cd libtheora-1.1.1
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static --with-ogg=$INSTALL_DIR --with-vorbis=$INSTALL_DIR
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # libwebp
+        #########################
+        wget https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.3.1.tar.gz
+        tar xzf libwebp-1.3.1.tar.gz
+        cd libwebp-1.3.1
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # aom
+        #########################
+        git clone --branch v3.6.0 https://aomedia.googlesource.com/aom
+        mkdir -p aom/build && cd aom/build
+        cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DBUILD_SHARED_LIBS=OFF ..
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd $BUILD_DIR
+
+        #########################
+        # svt-av1
+        #########################
+        git clone https://gitlab.com/AOMediaCodec/SVT-AV1.git
+        cd SVT-AV1
+        mkdir build && cd build
+        cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DBUILD_SHARED_LIBS=OFF ..
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd $BUILD_DIR
+
+        #########################
+        # kvazaar
+        #########################
+        git clone https://github.com/ultravideo/kvazaar.git
+        cd kvazaar
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # libbluray
+        #########################
+        wget https://downloads.videolan.org/pub/videolan/libbluray/1.3.3/libbluray-1.3.3.tar.bz2
+        tar xjf libbluray-1.3.3.tar.bz2
+        cd libbluray-1.3.3
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # libxml2
+        #########################
+        wget https://gitlab.gnome.org/GNOME/libxml2/-/archive/v2.11.5/libxml2-v2.11.5.tar.gz
+        tar xzf libxml2-v2.11.5.tar.gz
+        cd libxml2-v2.11.5
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # openjpeg
+        #########################
+        wget https://github.com/uclouvain/openjpeg/archive/refs/tags/v2.5.0.tar.gz -O openjpeg-2.5.0.tar.gz
+        tar xzf openjpeg-2.5.0.tar.gz
+        cd openjpeg-2.5.0
+        mkdir build && cd build
+        cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DBUILD_SHARED_LIBS=OFF ..
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd $BUILD_DIR
+
+        #########################
+        # libvidstab
+        #########################
+        git clone https://github.com/georgmartius/vid.stab.git
+        cd vid.stab
+        mkdir build && cd build
+        cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DBUILD_SHARED_LIBS=OFF ..
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd $BUILD_DIR
+
+        #########################
+        # libzimg
+        #########################
+        git clone https://github.com/sekrit-twc/zimg.git
+        cd zimg
+        mkdir build && cd build
+        cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DBUILD_SHARED_LIBS=OFF ..
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd $BUILD_DIR
+
+        #########################
+        # x264
+        #########################
+        git clone --branch stable https://code.videolan.org/videolan/x264.git
+        cd x264
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static --enable-pic
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # x265
+        #########################
+        git clone https://bitbucket.org/multicoreware/x265.git
+        cd x265/build
+        cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DENABLE_SHARED=OFF ../../source
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd $BUILD_DIR
+
+        #########################
+        # lame
+        #########################
+        git clone https://github.com/rbrito/lame.git
+        cd lame
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+        #########################
+        # libass
+        #########################
+        wget https://github.com/libass/libass/releases/download/0.16.1/libass-0.16.1.tar.xz
+        tar xf libass-0.16.1.tar.xz
+        cd libass-0.16.1
+        ./configure --prefix=$INSTALL_DIR --disable-shared --enable-static --with-freetype-prefix=$INSTALL_DIR
+        make -j$(sysctl -n hw.ncpu) && make install
+        cd ..
+
+    - name: Build FFmpeg
+      run: |
+        cd $BUILD_DIR
+        git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg
+        cd ffmpeg
+        export PKG_CONFIG_PATH=$INSTALL_DIR/lib/pkgconfig
+        export CFLAGS="-I$INSTALL_DIR/include"
+        export LDFLAGS="-L$INSTALL_DIR/lib -framework VideoToolbox"
+
+        ./configure \
+          --prefix=$INSTALL_DIR \
+          --arch=arm64 \
+          --cc=clang \
+          --enable-gpl \
+          --enable-nonfree \
+          --enable-static \
+          --disable-shared \
+          --enable-pic \
+          --enable-libx264 \
+          --enable-libx265 \
+          --enable-libfreetype \
+          --enable-fontconfig \
+          --enable-libass \
+          --enable-libmp3lame \
+          --enable-libvorbis \
+          --enable-libopus \
+          --enable-libvpx \
+          --enable-libwebp \
+          --enable-libtheora \
+          --enable-libvidstab \
+          --enable-libzimg \
+          --enable-libsvtav1 \
+          --enable-libkvazaar \
+          --enable-libopenjpeg \
+          --enable-libbluray \
+          --enable-libxml2 \
+          --enable-postproc \
+          --enable-ffplay \
+          --enable-runtime-cpudetect \
+          --enable-neon
+
+        make -j$(sysctl -n hw.ncpu)
+        make install
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ffmpeg-macos-arm64-full
+        path: $INSTALL_DIR
