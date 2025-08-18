@@ -95,3 +95,32 @@ jobs:
             echo "Python工具目录安装成功"
             ls -l "/opt/homebrew/ffmpeg-build/share/ffmpeg/python"
           fi
+      - name: 打包构建结果
+        run: |
+          # 创建打包目录
+          mkdir -p $HOME/ffmpeg-release
+          
+          # 获取FFmpeg版本信息
+          FFMPEG_VERSION=$(/opt/homebrew/ffmpeg-build/bin/ffmpeg -version | head -n 1 | awk '{print $3}' | cut -d '-' -f 1)
+          
+          # 定义打包文件名（包含版本和日期）
+          TIMESTAMP=$(date +%Y%m%d)
+          PACKAGE_NAME="ffmpeg-${FFMPEG_VERSION}-macos-arm64-${TIMESTAMP}.zip"
+          
+          # 复制构建结果到打包目录
+          cp -R /opt/homebrew/ffmpeg-build/* $HOME/ffmpeg-release/
+          
+          # 打包
+          cd $HOME
+          zip -r $PACKAGE_NAME ffmpeg-release/
+          
+          # 输出打包信息
+          echo "打包完成: $PACKAGE_NAME"
+          echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
+          
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}
+          path: ${{ github.workspace }}/../${{ env.PACKAGE_NAME }}
+          retention-days: 30 # 保存30天 
