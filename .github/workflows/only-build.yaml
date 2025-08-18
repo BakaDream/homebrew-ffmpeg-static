@@ -46,10 +46,15 @@ jobs:
           brew install libarchive libogg libsamplerate
       - name: 配置编译configure
         run: |
-          export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:/opt/homebrew/share/pkgconfig"
-          export CPATH="/opt/homebrew/include"
-          export LIBRARY_PATH="/opt/homebrew/lib"
-          export PATH="/opt/homebrew/bin:$PATH"
+          # 为 libarchive 添加额外路径
+          export PATH="/opt/homebrew/opt/libarchive/bin:/opt/homebrew/bin:$PATH"
+          export LDFLAGS="-L/opt/homebrew/opt/libarchive/lib -L/opt/homebrew/lib"
+          export CPPFLAGS="-I/opt/homebrew/opt/libarchive/include -I/opt/homebrew/include"
+          export PKG_CONFIG_PATH="/opt/homebrew/opt/libarchive/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:/opt/homebrew/share/pkgconfig"
+          export CPATH="/opt/homebrew/opt/libarchive/include:/opt/homebrew/include"
+          export LIBRARY_PATH="/opt/homebrew/opt/libarchive/lib:/opt/homebrew/lib"
+
+          
           mkdir /opt/homebrew/ffmpeg-build
 
           cd ffmpeg-source
