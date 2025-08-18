@@ -133,7 +133,8 @@ jobs:
             --enable-libopenvino \
             --enable-librav1e \
             --enable-libsvtav1 \
-            --disable-htmlpages
+            --disable-htmlpages \
+            --enable-version3
 
       - name: 编译FFmpeg
         run: |
