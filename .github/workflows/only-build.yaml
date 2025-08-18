@@ -1,99 +1,133 @@
-name: Build Native FFmpeg for Apple Silicon
+name: FFmpeg Static Build (macOS Apple Silicon)
 
+# 触发条件：手动触发 + 推送到main分支时触发
 on:
+  workflow_dispatch:  # 手动触发
   push:
     branches: [ main ]
-  workflow_dispatch:
 
 jobs:
-  build-native:
-    runs-on: macos-14
-    timeout-minutes: 180
-
+  build:
+    runs-on: macos-14  # 使用最新macOS runner（支持Apple Silicon，或Intel通过Rosetta兼容）
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: 检查源码
+        uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        brew update > /dev/null 2>&1
-        brew install --quiet pkg-config nasm yasm cmake autoconf automake libtool
-        brew install --quiet x264 x265 lame opus libvorbis libvpx webp fdk-aac freetype fontconfig \
-          libbluray openjpeg libass theora snappy aom vidstab zimg svt-av1 kvazaar harfbuzz
-        brew link --overwrite nasm yasm autoconf automake libtool x264 x265 lame opus libvorbis libvpx webp fdk-aac \
-          freetype fontconfig libbluray openjpeg libass theora snappy aom vidstab zimg svt-av1 kvazaar harfbuzz \
-          > /dev/null 2>&1 || true
-        export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
+      - name: 安装Homebrew并更新
+        run: |
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          brew update && brew upgrade
 
-    - name: Download FFmpeg source
-      run: |
-        if [ ! -d "ffmpeg-src" ]; then
-          curl -L "https://ffmpeg.org/releases/ffmpeg-snapshot.tar.bz2" -o ffmpeg.tar.bz2
-          tar -xjf ffmpeg.tar.bz2
-          mv ffmpeg ffmpeg-src
-          rm ffmpeg.tar.bz2
-        fi
+      - name: 安装静态编译依赖（必需+可选）
+        run: |
+          # 安装依赖时优先启用静态库（部分库需手动指定）
+          brew install aom dav1d fontconfig freetype frei0r harfbuzz lame libass libvorbis libvpx libx11 libxcb opus sdl2 snappy theora x264 x265 xz libarchive libogg libsamplerate
+          brew install aribb24 chromaprint fdk-aac game-music-emu jack jpeg-xl libaribcaption libbluray libbs2b libcaca libdvdnav libdvdread libgsm libmodplug libopenmpt libplacebo librist librsvg libsoxr libssh libtensorflow libvidstab libvmaf libxml2 openal-soft opencore-amr openh264 openjpeg openssl openvino rav1e rtmpdump rubberband speex srt svt-av1 tesseract two-lame webp xvid zeromq zimg
+          # 安装编译工具
+          brew install pkgconf nasm make gcc
 
-    - name: Configure FFmpeg for Apple Silicon
-      working-directory: ffmpeg-src
-      run: |
-        export SOURCE="$(pwd)/build"
-        mkdir -p $SOURCE
-        ./configure \
-          --prefix=${SOURCE} \
-          --extra-cflags="-fno-stack-check" \
-          --arch=arm64 \
-          --cc=/usr/bin/clang \
-          --enable-gpl \
-          --enable-libbluray \
-          --enable-libopenjpeg \
-          --enable-libopus \
-          --enable-libmp3lame \
-          --enable-libx264 \
-          --enable-libx265 \
-          --enable-libvpx \
-          --enable-libwebp \
-          --enable-libass \
-          --enable-libfreetype \
-          --enable-fontconfig \
-          --enable-libtheora \
-          --enable-libvorbis \
-          --enable-libsnappy \
-          --enable-libaom \
-          --enable-libvidstab \
-          --enable-libzimg \
-          --enable-libsvtav1 \
-          --enable-libkvazaar \
-          --enable-libharfbuzz \
-          --pkg-config-flags=--static \
-          --enable-ffplay \
-          --enable-postproc \
-          --enable-neon \
-          --enable-runtime-cpudetect \
-          --disable-indev=qtkit \
-          --disable-indev=x11grab_xcb \
-          --disable-shared \
-          --enable-static
+      - name: 下载FFmpeg源码并应用补丁
+        run: |
+          mkdir -p ~/ffmpeg-build && cd ~/ffmpeg-build
+          curl -O https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz
+          tar -xf ffmpeg-7.1.1.tar.xz && cd ffmpeg-7.1.1
+          # 应用补丁
+          curl -O https://github.com/FFmpeg/FFmpeg/commit/d1ed5c06e3edc5f2b5f3664c80121fa55b0baa95.patch?full_index=1 -o svt-av1.patch
+          patch -p1 < svt-av1.patch
+          curl -O https://gitlab.archlinux.org/archlinux/packaging/packages/ffmpeg/-/raw/5670ccd86d3b816f49ebc18cab878125eca2f81f/add-av_stream_get_first_dts-for-chromium.patch -o qtwebengine.patch
+          patch -p1 < qtwebengine.patch
 
-    - name: Build FFmpeg
-      working-directory: ffmpeg-src
-      run: make -j$(sysctl -n hw.ncpu)
+      - name: 静态编译配置
+        run: |
+          cd ~/ffmpeg-build/ffmpeg-7.1.1
+          # 静态编译核心参数（禁用动态库，启用静态库）
+          ./configure \
+            --prefix=/usr/local/ffmpeg-static \
+            --enable-static \          # 启用静态编译
+            --disable-shared \         # 禁用动态库
+            --cc=gcc \
+            --host-cflags="-arch arm64 -I/usr/local/include" \  # 适配Apple Silicon
+            --host-ldflags="-arch arm64 -L/usr/local/lib" \
+            --enable-gpl \
+            --enable-nonfree \
+            --enable-neon \
+            --enable-opencl \
+            --enable-audiotoolbox \
+            --enable-videotoolbox \
+            --enable-openal \
+            # 必需模块（静态链接）
+            --enable-libaom \
+            --enable-libdav1d \
+            --enable-libharfbuzz \
+            --enable-libmp3lame \
+            --enable-libopus \
+            --enable-libsnappy \
+            --enable-libtheora \
+            --enable-libvorbis \
+            --enable-libvpx \
+            --enable-libx264 \
+            --enable-libx265 \
+            --enable-libfontconfig \
+            --enable-libfreetype \
+            --enable-frei0r \
+            --enable-libass \
+            --enable-demuxer=dash \
+            # 可选模块（全功能静态链接）
+            --enable-chromaprint \
+            --enable-libaribb24 \
+            --enable-libaribcaption \
+            --enable-libbluray \
+            --enable-libbs2b \
+            --enable-libcaca \
+            --enable-libfdk-aac \
+            --enable-libgme \
+            --enable-libgsm \
+            --enable-libjxl \
+            --enable-libmodplug \
+            --enable-libopenh264 \
+            --enable-libopenjpeg \
+            --enable-libopenmpt \
+            --enable-libplacebo \
+            --enable-librist \
+            --enable-librsvg \
+            --enable-librtmp \
+            --enable-librubberband \
+            --enable-libsoxr \
+            --enable-libspeex \
+            --enable-libsrt \
+            --enable-libssh \
+            --enable-libtensorflow \
+            --enable-libtesseract \
+            --enable-libtwolame \
+            --enable-libvidstab \
+            --enable-libvmaf \
+            --enable-libwebp \
+            --enable-libxml2 \
+            --enable-libxvid \
+            --enable-libzimg \
+            --enable-libzmq \
+            --enable-openssl \
+            --enable-libopenvino \
+            --enable-librav1e \
+            --enable-libsvtav1 \
+            --disable-htmlpages
 
-    - name: Package binaries
-      run: |
-        mkdir -p release
-        cp ffmpeg-src/ffmpeg release/
-        cp ffmpeg-src/ffprobe release/
-        cp ffmpeg-src/ffplay release/
-        cd release
-        tar -czf ../ffmpeg-apple-silicon-native-${{ github.ref_name }}.tar.gz *
-        cd ..
-        shasum -a 256 ffmpeg-apple-silicon-native-${{ github.ref_name }}.tar.gz > checksums.txt
+      - name: 编译FFmpeg
+        run: |
+          cd ~/ffmpeg-build/ffmpeg-7.1.1
+          make -j$(sysctl -n hw.ncpu)  # 利用所有CPU核心加速编译
 
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: ffmpeg-apple-silicon-native
-        path: |
-          ffmpeg-apple-silicon-native-*.tar.gz
-          checksums.txt
+      - name: 安装并打包产物
+        run: |
+          cd ~/ffmpeg-build/ffmpeg-7.1.1
+          make install  # 安装到--prefix指定路径
+          # 打包静态编译产物（包含ffmpeg、ffprobe等）
+          cd /usr/local/ffmpeg-static
+          tar -czf ffmpeg-static-macos-arm64.tar.gz *
+
+      - name: 上传到Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-static-macos-arm64
+          path: /usr/local/ffmpeg-static/ffmpeg-static-macos-arm64.tar.gz
+          retention-days: 30  # 产物保留30天
