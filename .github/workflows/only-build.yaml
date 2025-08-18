@@ -48,6 +48,8 @@ jobs:
         run: |
           mkdir /opt/homebrew/ffmpeg-build
 
+          cd ffmpeg-source
+          
           ./configure \
           --prefix=/opt/homebrew/ffmpeg-build \
           --enable-static --disable-shared \
