@@ -47,6 +47,8 @@ jobs:
           --samples=fate-suite/
           --enable-static \
           --disable-shared \
+          --extra-ldflags="-L/opt/homebrew/lib" \
+          --extra-cflags="-I/opt/homebrew/include"
 
       - name: 编译FFmpeg
         run: |
