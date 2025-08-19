@@ -1,8 +1,8 @@
 name: Build Native FFmpeg for Apple Silicon
 
 on:
-  push:
-    branches: [ main ]  # 推送至main分支时触发
+#   push:
+    # branches: [ main ]  # 推送至main分支时触发
   workflow_dispatch:  # 允许手动触发
 
 jobs:

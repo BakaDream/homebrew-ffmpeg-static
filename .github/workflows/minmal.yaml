@@ -1,0 +1,56 @@
+name: Build FFmpeg macOS arm64
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: macos-14  # macOS arm64 runner (Apple Silicon)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install yasm pkg-config nasm
+
+      - name: Download FFmpeg source
+        run: |
+          curl -L https://ffmpeg.org/releases/ffmpeg-6.1.1.tar.gz -o ffmpeg.tar.gz
+          tar xzf ffmpeg.tar.gz
+          mv ffmpeg-* ffmpeg
+
+      - name: Configure FFmpeg (static build)
+        run: |
+          cd ffmpeg
+          ./configure \
+            --arch=arm64 \
+            --enable-static \
+            --disable-shared \
+            --disable-debug \
+            --disable-doc \
+            --enable-pic \
+            --extra-cflags="-fPIC" \
+            --prefix=$PWD/build
+
+      - name: Build FFmpeg
+        run: |
+          cd ffmpeg
+          make -j$(sysctl -n hw.logicalcpu)
+          make install
+
+      - name: Package binary
+        run: |
+          cd ffmpeg/build
+          tar czf ../../ffmpeg-macos-arm64.tar.gz bin include lib share
+
+      - name: Upload FFmpeg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-macos-arm64
+          path: ffmpeg-macos-arm64.tar.gz
