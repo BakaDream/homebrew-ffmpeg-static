@@ -18,6 +18,7 @@ jobs:
 
       - name: Install build tools
         run: |
+          brew install git tar unzip curl wget
           brew install yasm nasm cmake pkg-config automake autoconf libtool
 
       # Build x264
