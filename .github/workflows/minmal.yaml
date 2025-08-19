@@ -29,8 +29,9 @@ jobs:
           cd ~/ffmpeg_sources
           git clone --depth 1 https://code.videolan.org/videolan/x264.git
           cd x264
+          # 移除 x264 不支持的 --disable-shared 选项
           ./configure --prefix="$HOME/ffmpeg_build" --bindir="$HOME/bin" \
-            --enable-static --disable-shared --enable-pic
+            --enable-static --enable-pic
           make -j$(sysctl -n hw.ncpu)
           make install
 
@@ -64,13 +65,26 @@ jobs:
           make -j$(sysctl -n hw.ncpu)
           make install
 
+      # 添加 Ogg 编译步骤，解决 vorbis 依赖问题
+      - name: Build ogg
+        run: |
+          cd ~/ffmpeg_sources
+          git clone --depth 1 https://github.com/xiph/ogg.git
+          cd ogg
+          autoreconf -fiv
+          ./configure --prefix="$HOME/ffmpeg_build" --enable-static --disable-shared
+          make -j$(sysctl -n hw.ncpu)
+          make install
+
       - name: Build vorbis
         run: |
           cd ~/ffmpeg_sources
           git clone --depth 1 https://github.com/xiph/vorbis.git
           cd vorbis
           autoreconf -fiv
-          ./configure --prefix="$HOME/ffmpeg_build" --enable-static --disable-shared
+          # 明确指定 Ogg 库的路径
+          ./configure --prefix="$HOME/ffmpeg_build" --enable-static --disable-shared \
+            --with-ogg="$HOME/ffmpeg_build"
           make -j$(sysctl -n hw.ncpu)
           make install
 
