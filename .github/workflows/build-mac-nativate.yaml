@@ -2,58 +2,72 @@ name: Build Native FFmpeg for Apple Silicon
 
 on:
   push:
-    branches: [ main ]  # For development testing
-  workflow_dispatch:
+    branches: [ main ]  # 推送至main分支时触发
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
   build-native:
-    runs-on: macos-14  # Apple Silicon runner
-    timeout-minutes: 180  # 3 hours max
-    
+    runs-on: macos-14  # 使用Apple Silicon架构的macOS runner
+    timeout-minutes: 180  # 最长运行时间3小时
+
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
-      
+      uses: actions/checkout@v4  # 拉取当前仓库代码
+
     - name: 拉取源码
       run: |
-        # 定义源码存放目录（与编译脚本中的COMPILED保持一致）
-        COMPILED="./compile"
+        # 定义源码存放目录（使用绝对路径，避免相对路径问题）
+        COMPILED="${GITHUB_WORKSPACE}/compile"  # GITHUB_WORKSPACE为仓库在runner中的绝对路径
+        
+        # 创建目录并强制校验（若失败直接终止）
+        echo "📂 尝试创建源码存放目录: ${COMPILED}"
+        mkdir -p ${COMPILED} || { echo "❌ 无法创建目录${COMPILED}（可能权限不足）"; exit 1; }
+        
+        # 二次验证目录是否存在
+        if [ ! -d "${COMPILED}" ]; then
+            echo "❌ 目录${COMPILED}创建失败，终止流程"
+            exit 1
+        fi
+        echo "📂 源码存放目录创建成功: ${COMPILED}"
 
-        # 创建目录（若不存在）
-        mkdir -p ${COMPILED}
-        echo "📂 已创建源码存放目录: ${COMPILED}"
-
-        # 拉取源码函数（通用函数，简化重复操作）
+        # 拉取源码函数（通用逻辑封装）
         pull_source() {
-            local name=$1
-            local url=$2
-            local dir=$3
+            local name=$1      # 库名称（用于日志）
+            local url=$2       # 源码地址（git仓库或tar包）
+            local dir=$3       # 解压/克隆后的目录名
             
             echo -e "\n🔍 开始拉取: ${name}"
-            cd ${COMPILED} || exit 1
+            
+            # 进入源码目录前再次校验目录存在性
+            if [ ! -d "${COMPILED}" ]; then
+                echo "❌ 目录${COMPILED}不存在，拉取${name}失败"
+                exit 1
+            fi
+            cd ${COMPILED} || { echo "❌ 无法进入目录${COMPILED}"; exit 1; }
             
             # 若目标目录已存在，先删除（避免版本冲突）
             if [ -d "${dir}" ]; then
                 echo "⚠️ 检测到已有${dir}，正在删除旧版本..."
-                rm -rf ${dir}
+                rm -rf ${dir} || { echo "❌ 无法删除旧目录${dir}"; exit 1; }
             fi
             
-            # 根据URL类型选择拉取方式（git或tar包）
+            # 根据URL类型选择拉取方式
             if [[ ${url} == git@* || ${url} == https://*.git ]]; then
-                # git仓库
-                git clone --depth 1 ${url} ${dir}
+                # 拉取git仓库（--depth 1仅拉取最新版本，加速过程）
+                git clone --depth 1 ${url} ${dir} || { echo "❌ git克隆${name}失败"; exit 1; }
             else
-                # tar包（支持.tar.gz/.tar.xz等）
+                # 下载tar包并解压
                 local filename=$(basename ${url})
+                echo "📥 下载${name}包: ${filename}"
                 wget -c ${url} -O ${filename} || { echo "❌ 下载${name}失败"; exit 1; }
                 
                 # 自动识别压缩格式并解压
                 if [[ ${filename} == *.tar.gz ]]; then
-                    tar zxf ${filename}
+                    tar zxf ${filename} || { echo "❌ 解压${filename}失败"; exit 1; }
                 elif [[ ${filename} == *.tar.xz ]]; then
-                    tar Jxf ${filename}
+                    tar Jxf ${filename} || { echo "❌ 解压${filename}失败"; exit 1; }
                 elif [[ ${filename} == *.tar.bz2 ]]; then
-                    tar jxf ${filename}
+                    tar jxf ${filename} || { echo "❌ 解压${filename}失败"; exit 1; }
                 else
                     echo "❌ 不支持的压缩格式: ${filename}"
                     exit 1
@@ -65,182 +79,183 @@ jobs:
             if [ -d "${dir}" ]; then
                 echo "✅ ${name}拉取成功"
             else
-                echo "❌ ${name}拉取失败"
+                echo "❌ ${name}拉取失败（目标目录${dir}未创建）"
                 exit 1
             fi
         }
 
-        # 1. NASM（汇编器）
+        # 拉取各依赖源码（按编译顺序排列）
+        # 1. 汇编器
         pull_source "NASM" \
             "https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz" \
             "nasm-2.16.01"
 
-        # 2. pkg-config
+        # 2. 包管理工具
         pull_source "pkg-config" \
             "https://pkg-config.freedesktop.org/releases/pkg-config-0.29.2.tar.gz" \
             "pkg-config-0.29.2"
 
-        # 3. XZ（压缩工具）
+        # 3. 压缩工具
         pull_source "XZ" \
             "https://tukaani.org/xz/xz-5.4.6.tar.gz" \
             "xz"
 
-        # 4. ZLIB
+        # 4. 压缩库
         pull_source "ZLIB" \
             "https://zlib.net/zlib-1.2.13.tar.gz" \
             "zlib-1.2.13"
 
-        # 5. CMake
+        # 5. 构建工具
         pull_source "CMake" \
             "https://cmake.org/files/v3.25/cmake-3.25.1.tar.gz" \
             "cmake-3.25.1"
 
-        # 6. libxml2
+        # 6. XML解析库
         pull_source "libxml2" \
             "https://download.gnome.org/sources/libxml2/2.10/libxml2-2.10.3.tar.xz" \
             "libxml2-v2.10.3"
 
-        # 7. LAME（MP3编码器）
+        # 7. MP3编码器
         pull_source "LAME" \
             "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz" \
             "lame"
 
-        # 8. x264（H.264编码器）
+        # 8. H.264编码器
         pull_source "x264" \
             "git://git.videolan.org/x264.git" \
             "x264"
 
-        # 9. x265（H.265编码器，Neon优化版）
+        # 9. H.265编码器（Neon优化版）
         pull_source "x265Neon" \
             "https://bitbucket.org/multicoreware/x265_git.git" \
             "x265Neon"
 
-        # 10. libvpx（VP8/VP9编码器）
+        # 10. VP8/VP9编码器
         pull_source "libvpx" \
             "https://github.com/webmproject/libvpx.git" \
             "libvpx"
 
-        # 11. Expat（XML解析库）
+        # 11. XML解析库
         pull_source "Expat" \
             "https://github.com/libexpat/libexpat/releases/download/R_2_4_8/expat-2.4.8.tar.gz" \
             "expat-2.4.8"
 
-        # 12. Gettext（国际化库）
+        # 12. 国际化库
         pull_source "Gettext" \
             "https://ftp.gnu.org/pub/gnu/gettext/gettext-0.21.1.tar.gz" \
             "gettext-0.21.1"
 
-        # 13. libpng（PNG图像处理）
+        # 13. PNG图像处理库
         pull_source "libpng" \
             "https://downloads.sourceforge.net/project/libpng/libpng16/1.6.37/libpng-1.6.37.tar.gz" \
             "libpng-1.6.37"
 
-        # 14. Enca（编码检测库）
+        # 14. 编码检测库
         pull_source "Enca" \
             "https://downloads.sourceforge.net/project/enca/enca/1.19/enca-1.19.tar.gz" \
             "enca-1.19"
 
-        # 15. FriBidi（文本排版库）
+        # 15. 文本排版库
         pull_source "FriBidi" \
             "https://github.com/fribidi/fribidi/releases/download/v1.0.12/fribidi-1.0.12.tar.xz" \
             "fribidi-1.0.12"
 
-        # 16. FreeType（字体渲染库）
+        # 16. 字体渲染库
         pull_source "FreeType" \
             "https://download.savannah.gnu.org/releases/freetype/freetype-2.12.1.tar.gz" \
             "freetype-2.12.1"
 
-        # 17. Fontconfig（字体配置库）
+        # 17. 字体配置库
         pull_source "Fontconfig" \
             "https://www.freedesktop.org/software/fontconfig/release/fontconfig-2.14.2.tar.xz" \
             "fontconfig-2.14.2"
 
-        # 18. HarfBuzz（文字排版引擎）
+        # 18. 文字排版引擎
         pull_source "HarfBuzz" \
             "https://github.com/harfbuzz/harfbuzz/releases/download/6.0.0/harfbuzz-6.0.0.tar.xz" \
             "harfbuzz-6.0.0"
 
-        # 19. SDL2（多媒体库）
+        # 19. 多媒体库
         pull_source "SDL2" \
             "https://www.libsdl.org/release/SDL2-2.26.2.tar.gz" \
             "SDL2-2.26.2"
 
-        # 20. libass（字幕渲染库）
+        # 20. 字幕渲染库
         pull_source "libass" \
             "https://github.com/libass/libass/releases/download/0.17.0/libass-0.17.0.tar.xz" \
             "libass-0.17.0"
 
-        # 21. Opus（音频编码器）
+        # 21. 音频编码器
         pull_source "Opus" \
             "https://downloads.xiph.org/releases/opus/opus-1.3.1.tar.gz" \
             "opus-1.3.1"
 
-        # 22. libogg（Ogg容器格式）
+        # 22. Ogg容器格式库
         pull_source "libogg" \
             "https://downloads.xiph.org/releases/ogg/libogg-1.3.5.tar.gz" \
             "libogg-1.3.5"
 
-        # 23. libvorbis（Vorbis音频编码器）
+        # 23. Vorbis音频编码器
         pull_source "libvorbis" \
             "https://downloads.xiph.org/releases/vorbis/libvorbis-1.3.7.tar.gz" \
             "libvorbis-1.3.7"
 
-        # 24. libtheora（Theora视频编码器）
+        # 24. Theora视频编码器
         pull_source "libtheora" \
             "https://downloads.xiph.org/releases/theora/libtheora-1.1.1.tar.gz" \
             "libtheora-1.1.1"
 
-        # 25. vid.stab（视频防抖库）
+        # 25. 视频防抖库
         pull_source "vid.stab" \
             "https://github.com/georgmartius/vid.stab.git" \
             "vidstab-master"
 
-        # 26. Snappy（压缩库）
+        # 26. 压缩库
         pull_source "Snappy" \
             "https://github.com/google/snappy/archive/refs/tags/1.1.9.tar.gz" \
             "snappy"
 
-        # 27. OpenJPEG（JPEG 2000库）
+        # 27. JPEG 2000库
         pull_source "OpenJPEG" \
             "https://github.com/uclouvain/openjpeg/archive/refs/tags/v2.5.0.tar.gz" \
             "openjpeg-2.5.0"
 
-        # 28. AOM（AV1编码器）
+        # 28. AV1编码器
         pull_source "AOM" \
             "https://aomedia.googlesource.com/aom" \
             "aom"
 
-        # 29. libwebp（WebP图像库）
+        # 29. WebP图像库
         pull_source "libwebp" \
             "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.1.0.tar.gz" \
             "libwebp-1.1.0"
 
-        # 30. zimg（图像缩放库）
+        # 30. 图像缩放库
         pull_source "zimg" \
             "https://github.com/sekrit-twc/zimg/archive/refs/tags/release-3.0.2.tar.gz" \
             "zimg-release-3.0.2"
 
-        # 31. SVT-AV1（AV1编码器）
+        # 31. AV1编码器
         pull_source "SVT-AV1" \
             "https://github.com/AOMediaCodec/SVT-AV1.git" \
             "SVT-AV1-master"
 
-        # 32. Kvazaar（HEVC编码器）
+        # 32. HEVC编码器
         pull_source "Kvazaar" \
             "https://github.com/ultravideo/kvazaar/archive/refs/tags/v2.2.0.tar.gz" \
             "kvazaar-2.2.0"
 
-        # 33. libudfread（UDF格式读取库）
+        # 33. UDF格式读取库
         pull_source "libudfread" \
             "https://code.videolan.org/videolan/libudfread.git" \
             "libudfread"
 
-        # 34. libbluray（蓝光播放库）
+        # 34. 蓝光播放库
         pull_source "libbluray" \
             "https://code.videolan.org/videolan/libbluray.git" \
             "libbluray"
 
-        # 35. FFmpeg（主程序）
+        # 35. FFmpeg主程序
         pull_source "FFmpeg" \
             "https://github.com/FFmpeg/FFmpeg.git" \
             "ffmpeg"
@@ -248,418 +263,577 @@ jobs:
         echo -e "\n🎉 所有源码拉取完成！存放目录：${COMPILED}"
         echo "下一步：执行编译脚本开始编译"
 
-    - name: 编译全部
+    - name: 编译全部组件
       run: |
-        # 定义本地路径（替代ramdisk路径）
-        SOURCE="./sw"
-        COMPILED="./compile"
+        # 定义编译输出目录（使用绝对路径）
+        SOURCE="${GITHUB_WORKSPACE}/sw"
+        COMPILED="${GITHUB_WORKSPACE}/compile"
 
-        # 创建所需目录
-        mkdir -p ${SOURCE}
-        mkdir -p ${COMPILED}
+        # 创建输出目录
+        mkdir -p ${SOURCE} || { echo "❌ 无法创建输出目录${SOURCE}"; exit 1; }
+        echo "📂 编译输出目录: ${SOURCE}"
 
-        # 设置环境变量
+        # 设置环境变量（优先使用本地编译的工具和库）
         export PATH=${SOURCE}/bin:$PATH
-        export CC=clang && export PKG_CONFIG_PATH="${SOURCE}/lib/pkgconfig"
+        export CC=clang  # 使用Clang编译器（Apple Silicon优化）
+        export PKG_CONFIG_PATH="${SOURCE}/lib/pkgconfig"  # 指定pkg-config查找路径
 
+        # 编译NASM（汇编器）
         echo '♻️ 开始编译 NASM'
+        cd ${COMPILED}/nasm-2.16.01 || { echo "❌ 找不到NASM源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} || { echo "❌ NASM配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ NASM编译失败"; exit 1; }
+        make install || { echo "❌ NASM安装失败"; exit 1; }
+        sleep 1  # 避免编译过程过于密集
 
-        # 编译NASM
-        cd ${COMPILED}/nasm-2.16.01 || exit 1
-        ./configure --prefix=${SOURCE}
-        make -j$(nproc)  # 自动检测CPU核心数设置线程
-        make install
+        # 编译pkg-config（包管理工具）
+        echo '♻️ 开始编译 pkg-config'
+        cd ${COMPILED}/pkg-config-0.29.2 || { echo "❌ 找不到pkg-config源码目录"; exit 1; }
+        export LDFLAGS="-framework Foundation -framework Cocoa"  # 链接macOS系统框架
+        ./configure --prefix=${SOURCE} \
+            --with-pc-path=${SOURCE}/lib/pkgconfig \
+            --with-internal-glib \
+            --disable-shared \
+            --enable-static || { echo "❌ pkg-config配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ pkg-config编译失败"; exit 1; }
+        make install || { echo "❌ pkg-config安装失败"; exit 1; }
+        unset LDFLAGS  # 清除临时环境变量
         sleep 1
 
-        echo '♻️ 开始编译 PKG-Config'
-
-        # 编译PKG-Config
-        cd ${COMPILED}/pkg-config-0.29.2 || exit 1
-        export LDFLAGS="-framework Foundation -framework Cocoa"
-        ./configure --prefix=${SOURCE} --with-pc-path=${SOURCE}/lib/pkgconfig --with-internal-glib --disable-shared --enable-static
-        make -j$(nproc)
-        make install
-        unset LDFLAGS
-        sleep 1
-
-        # 编译XZ
+        # 编译XZ（压缩工具）
         echo '♻️ 开始编译 XZ'
-        cd ${COMPILED}/xz || exit 1
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static --disable-docs --disable-examples
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/xz || { echo "❌ 找不到XZ源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static \
+            --disable-docs \
+            --disable-examples || { echo "❌ XZ配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ XZ编译失败"; exit 1; }
+        make install || { echo "❌ XZ安装失败"; exit 1; }
 
+        # 编译ZLIB（压缩库）
         echo '♻️ 开始编译 ZLIB'
+        cd ${COMPILED}/zlib-1.2.13 || { echo "❌ 找不到ZLIB源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} --static || { echo "❌ ZLIB配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ ZLIB编译失败"; exit 1; }
+        make install || { echo "❌ ZLIB安装失败"; exit 1; }
 
-        # 编译ZLIB
-        cd ${COMPILED}/zlib-1.2.13 || exit 1
-        ./configure --prefix=${SOURCE} --static
-        make -j$(nproc)
-        make install
-
+        # 编译CMake（构建工具）
         echo '♻️ 开始编译 CMake'
-
-        # 编译CMAKE
-        cd ${COMPILED}/cmake-3.25.1 || exit 1
-        ./configure --prefix=${SOURCE}
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/cmake-3.25.1 || { echo "❌ 找不到CMake源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} || { echo "❌ CMake配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ CMake编译失败"; exit 1; }
+        make install || { echo "❌ CMake安装失败"; exit 1; }
         sleep 1
 
+        # 编译libxml2（XML解析库）
         echo '♻️ 开始编译 libxml2'
-
-        # 编译libxml2
-        cd ${COMPILED}/libxml2-v2.10.3 || exit 1
-        ./autogen.sh
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static --without-python
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/libxml2-v2.10.3 || { echo "❌ 找不到libxml2源码目录"; exit 1; }
+        ./autogen.sh || { echo "❌ libxml2自动生成配置失败"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static \
+            --without-python || { echo "❌ libxml2配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ libxml2编译失败"; exit 1; }
+        make install || { echo "❌ libxml2安装失败"; exit 1; }
         sleep 1
 
-        echo '♻️ 开始编译 Lame'
+        # 编译LAME（MP3编码器）
+        echo '♻️ 开始编译 LAME'
+        cd ${COMPILED}/lame || { echo "❌ 找不到LAME源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static || { echo "❌ LAME配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ LAME编译失败"; exit 1; }
+        make install || { echo "❌ LAME安装失败"; exit 1; }
 
-        # 编译Lame
-        cd ${COMPILED}/lame || exit 1
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static
-        make -j$(nproc)
-        make install
-
-        echo '♻️ 开始编译 X264'
-
-        # 编译x264
-        cd ${COMPILED}/x264 || exit 1
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static --enable-pic
-        make -j$(nproc)
-        make install
-        make install-lib-static
+        # 编译x264（H.264编码器）
+        echo '♻️ 开始编译 x264'
+        cd ${COMPILED}/x264 || { echo "❌ 找不到x264源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static \
+            --enable-pic || { echo "❌ x264配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ x264编译失败"; exit 1; }
+        make install || { echo "❌ x264安装失败"; exit 1; }
+        make install-lib-static || { echo "❌ x264静态库安装失败"; exit 1; }
         sleep 1
 
-        echo '♻️ 开始编译 X265'
-
-        # 编译x265
+        # 编译x265（H.265编码器，多比特深度版本）
+        echo '♻️ 开始编译 x265'
+        # 清理旧文件（避免冲突）
         rm -f ${SOURCE}/include/x265*.h 2>/dev/null
         rm -f ${SOURCE}/lib/libx265.a 2>/dev/null
 
-        echo '♻️ X265 12bit'
-        cd ${COMPILED}/x265Neon/source || exit 1
-        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} -DHIGH_BIT_DEPTH=ON -DMAIN12=ON -DENABLE_SHARED=NO -DEXPORT_C_API=NO -DENABLE_CLI=OFF .
-        make -j$(nproc)
-        mv libx265.a libx265_main12.a
-        make clean-generated
-        rm CMakeCache.txt
+        # 编译12bit版本
+        echo '♻️ x265 12bit'
+        cd ${COMPILED}/x265Neon/source || { echo "❌ 找不到x265源码目录"; exit 1; }
+        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} \
+            -DHIGH_BIT_DEPTH=ON \
+            -DMAIN12=ON \
+            -DENABLE_SHARED=NO \
+            -DEXPORT_C_API=NO \
+            -DENABLE_CLI=OFF . || { echo "❌ x265 12bit配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ x265 12bit编译失败"; exit 1; }
+        mv libx265.a libx265_main12.a || { echo "❌ 重命名x265 12bit库失败"; exit 1; }
+        make clean-generated || { echo "❌ 清理x265 12bit临时文件失败"; exit 1; }
+        rm CMakeCache.txt || { echo "❌ 删除x265 CMake缓存失败"; exit 1; }
 
-        echo '♻️ X265 10bit'
-        cd ${COMPILED}/x265Neon/source || exit 1
-        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} -DHIGH_BIT_DEPTH=ON -DMAIN10=ON -DENABLE_HDR10_PLUS=ON -DENABLE_SHARED=NO -DEXPORT_C_API=NO -DENABLE_CLI=OFF .
-        make clean
-        make -j$(nproc)
-        mv libx265.a libx265_main10.a
-        make clean-generated && rm CMakeCache.txt
+        # 编译10bit版本
+        echo '♻️ x265 10bit'
+        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} \
+            -DHIGH_BIT_DEPTH=ON \
+            -DMAIN10=ON \
+            -DENABLE_HDR10_PLUS=ON \
+            -DENABLE_SHARED=NO \
+            -DEXPORT_C_API=NO \
+            -DENABLE_CLI=OFF . || { echo "❌ x265 10bit配置失败"; exit 1; }
+        make clean || { echo "❌ 清理x265 10bit临时文件失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ x265 10bit编译失败"; exit 1; }
+        mv libx265.a libx265_main10.a || { echo "❌ 重命名x265 10bit库失败"; exit 1; }
+        make clean-generated || { echo "❌ 清理x265 10bit临时文件失败"; exit 1; }
+        rm CMakeCache.txt || { echo "❌ 删除x265 CMake缓存失败"; exit 1; }
 
-        echo '♻️ X265 full'
-        cd ${COMPILED}/x265Neon/source || exit 1
-        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} -DEXTRA_LIB="x265_main10.a;x265_main12.a" -DEXTRA_LINK_FLAGS=-L. -DLINKED_10BIT=ON -DLINKED_12BIT=ON -DENABLE_SHARED=OFF -DENABLE_CLI=OFF .
-        make clean
-        make -j$(nproc)
-        mv libx265.a libx265_main.a
-        libtool -static -o libx265.a libx265_main.a libx265_main10.a libx265_main12.a 2>/dev/null
-        make install
+        # 编译主版本（合并10/12bit库）
+        echo '♻️ x265 full'
+        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} \
+            -DEXTRA_LIB="x265_main10.a;x265_main12.a" \
+            -DEXTRA_LINK_FLAGS=-L. \
+            -DLINKED_10BIT=ON \
+            -DLINKED_12BIT=ON \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_CLI=OFF . || { echo "❌ x265 主版本配置失败"; exit 1; }
+        make clean || { echo "❌ 清理x265主版本临时文件失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ x265主版本编译失败"; exit 1; }
+        mv libx265.a libx265_main.a || { echo "❌ 重命名x265主库失败"; exit 1; }
+        libtool -static -o libx265.a libx265_main.a libx265_main10.a libx265_main12.a 2>/dev/null || { echo "❌ 合并x265库失败"; exit 1; }
+        make install || { echo "❌ x265安装失败"; exit 1; }
         sleep 1
 
+        # 编译libvpx（VP8/VP9编码器）
         echo '♻️ 开始编译 libvpx'
+        cd ${COMPILED}/libvpx || { echo "❌ 找不到libvpx源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --enable-vp8 \
+            --enable-postproc \
+            --enable-vp9-postproc \
+            --enable-vp9-highbitdepth \
+            --disable-examples \
+            --disable-docs \
+            --enable-multi-res-encoding \
+            --disable-unit-tests \
+            --enable-pic \
+            --disable-shared || { echo "❌ libvpx配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ libvpx编译失败"; exit 1; }
+        make install || { echo "❌ libvpx安装失败"; exit 1; }
 
-        # 编译VPX
-        cd ${COMPILED}/libvpx || exit 1
-        ./configure --prefix=${SOURCE} --enable-vp8 --enable-postproc --enable-vp9-postproc --enable-vp9-highbitdepth --disable-examples --disable-docs --enable-multi-res-encoding --disable-unit-tests --enable-pic --disable-shared
-        make -j$(nproc)
-        make install
-
+        # 编译Expat（XML解析库）
         echo '♻️ 开始编译 Expat'
+        cd ${COMPILED}/expat-2.4.8 || { echo "❌ 找不到Expat源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static || { echo "❌ Expat配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ Expat编译失败"; exit 1; }
+        make install || { echo "❌ Expat安装失败"; exit 1; }
 
-        # 编译EXPAT
-        cd ${COMPILED}/expat-2.4.8 || exit 1
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static
-        make -j$(nproc)
-        make install
-
+        # 编译Gettext（国际化库）
         echo '♻️ 开始编译 Gettext'
+        cd ${COMPILED}/gettext-0.21.1 || { echo "❌ 找不到Gettext源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-dependency-tracking \
+            --disable-silent-rules \
+            --disable-debug \
+            --with-included-gettext \
+            --with-included-glib \
+            --with-included-libcroco \
+            --with-included-libunistring \
+            --with-included-libxml \
+            --with-emacs \
+            --disable-java \
+            --disable-native-java \
+            --disable-csharp \
+            --disable-shared \
+            --enable-static \
+            --without-git \
+            --without-cvs \
+            --disable-docs \
+            --disable-examples || { echo "❌ Gettext配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ Gettext编译失败"; exit 1; }
+        make install || { echo "❌ Gettext安装失败"; exit 1; }
 
-        # 编译Gettext
-        cd ${COMPILED}/gettext-0.21.1 || exit 1
-        ./configure --prefix=${SOURCE} --disable-dependency-tracking --disable-silent-rules --disable-debug --with-included-gettext --with-included-glib \
-        --with-included-libcroco --with-included-libunistring --with-included-libxml --with-emacs --disable-java --disable-native-java --disable-csharp \
-        --disable-shared --enable-static --without-git --without-cvs --disable-docs --disable-examples
-        make -j$(nproc)
-        make install
-
+        # 编译libpng（PNG图像处理）
         echo '♻️ 开始编译 libpng'
+        cd ${COMPILED}/libpng-1.6.37 || { echo "❌ 找不到libpng源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-dependency-tracking \
+            --disable-silent-rules \
+            --enable-static \
+            --disable-shared || { echo "❌ libpng配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ libpng编译失败"; exit 1; }
+        make install || { echo "❌ libpng安装失败"; exit 1; }
 
-        # 编译LIBPNG
-        cd ${COMPILED}/libpng-1.6.37 || exit 1
-        ./configure --prefix=${SOURCE} --disable-dependency-tracking --disable-silent-rules --enable-static --disable-shared
-        make -j$(nproc)
-        make install
-
+        # 编译Enca（编码检测库）
         echo '♻️ 开始编译 Enca'
+        cd ${COMPILED}/enca-1.19 || { echo "❌ 找不到Enca源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static || { echo "❌ Enca配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ Enca编译失败"; exit 1; }
+        make install || { echo "❌ Enca安装失败"; exit 1; }
 
-        # 编译ENCA
-        cd ${COMPILED}/enca-1.19 || exit 1
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static
-        make -j$(nproc)
-        make install
-
+        # 编译FriBidi（文本排版库）
         echo '♻️ 开始编译 FriBidi'
+        cd ${COMPILED}/fribidi-1.0.12 || { echo "❌ 找不到FriBidi源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static \
+            --disable-silent-rules \
+            --disable-debug \
+            --disable-dependency-tracking || { echo "❌ FriBidi配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ FriBidi编译失败"; exit 1; }
+        make install || { echo "❌ FriBidi安装失败"; exit 1; }
 
-        # 编译FRIBIDI
-        cd ${COMPILED}/fribidi-1.0.12 || exit 1
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static --disable-silent-rules --disable-debug --disable-dependency-tracking
-        make -j$(nproc)
-        make install
-
+        # 编译FreeType（字体渲染库）
         echo '♻️ 开始编译 FreeType'
+        cd ${COMPILED}/freetype-2.12.1 || { echo "❌ 找不到FreeType源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static \
+            --enable-freetype-config || { echo "❌ FreeType配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ FreeType编译失败"; exit 1; }
+        make install || { echo "❌ FreeType安装失败"; exit 1; }
 
-        # 编译FREETYPE
-        cd ${COMPILED}/freetype-2.12.1 || exit 1
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static --enable-freetype-config
-        make -j$(nproc)
-        make install
-
+        # 编译Fontconfig（字体配置库）
         echo '♻️ 开始编译 Fontconfig'
-
-        # 编译FONTCONFIG
-        cd ${COMPILED}/fontconfig-2.14.2 || exit 1
-        ./configure --prefix=${SOURCE} --enable-iconv --disable-libxml2 --disable-dependency-tracking --disable-silent-rules --disable-shared --enable-static
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/fontconfig-2.14.2 || { echo "❌ 找不到Fontconfig源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --enable-iconv \
+            --disable-libxml2 \
+            --disable-dependency-tracking \
+            --disable-silent-rules \
+            --disable-shared \
+            --enable-static || { echo "❌ Fontconfig配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ Fontconfig编译失败"; exit 1; }
+        make install || { echo "❌ Fontconfig安装失败"; exit 1; }
         sleep 1
 
+        # 编译HarfBuzz（文字排版引擎）
         echo '♻️ 开始编译 HarfBuzz'
+        cd ${COMPILED}/harfbuzz-6.0.0 || { echo "❌ 找不到HarfBuzz源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static || { echo "❌ HarfBuzz配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ HarfBuzz编译失败"; exit 1; }
+        make install || { echo "❌ HarfBuzz安装失败"; exit 1; }
 
-        # 编译HARFBUZZ
-        cd ${COMPILED}/harfbuzz-6.0.0 || exit 1
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static
-        make -j$(nproc)
-        make install
-
+        # 编译SDL2（多媒体库）
         echo '♻️ 开始编译 SDL2'
+        cd ${COMPILED}/SDL2-2.26.2 || { echo "❌ 找不到SDL2源码目录"; exit 1; }
+        ./autogen.sh || { echo "❌ SDL2自动生成配置失败"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static \
+            --without-x \
+            --enable-hidapi || { echo "❌ SDL2配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ SDL2编译失败"; exit 1; }
+        make install || { echo "❌ SDL2安装失败"; exit 1; }
 
-        # 编译SDL
-        cd ${COMPILED}/SDL2-2.26.2 || exit 1
-        ./autogen.sh
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static --without-x --enable-hidapi
-        make -j$(nproc)
-        make install
-
-        # 编译LIBASS
-        cd ${COMPILED}/libass-0.17.0 || exit 1
-        ./configure --prefix=${SOURCE} --disable-fontconfig --disable-shared --enable-static
-        make -j$(nproc)
-        make install
+        # 编译libass（字幕渲染库）
+        echo '♻️ 开始编译 libass'
+        cd ${COMPILED}/libass-0.17.0 || { echo "❌ 找不到libass源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-fontconfig \
+            --disable-shared \
+            --enable-static || { echo "❌ libass配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ libass编译失败"; exit 1; }
+        make install || { echo "❌ libass安装失败"; exit 1; }
         sleep 1
 
+        # 编译Opus（音频编码器）
         echo '♻️ 开始编译 Opus'
-
-        # 编译OPUS
-        cd ${COMPILED}/opus-1.3.1 || exit 1
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/opus-1.3.1 || { echo "❌ 找不到Opus源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static || { echo "❌ Opus配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ Opus编译失败"; exit 1; }
+        make install || { echo "❌ Opus安装失败"; exit 1; }
         sleep 1
 
-        # 编译LIBOGG
-        cd ${COMPILED}/libogg-1.3.5 || exit 1
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static --disable-dependency-tracking
-        make -j$(nproc)
-        make install
+        # 编译libogg（Ogg容器格式）
+        echo '♻️ 开始编译 libogg'
+        cd ${COMPILED}/libogg-1.3.5 || { echo "❌ 找不到libogg源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static \
+            --disable-dependency-tracking || { echo "❌ libogg配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ libogg编译失败"; exit 1; }
+        make install || { echo "❌ libogg安装失败"; exit 1; }
         sleep 1
 
-        # 编译LIBVORBIS
-        cd ${COMPILED}/libvorbis-1.3.7 || exit 1
-        ./configure --prefix=${SOURCE} --with-ogg-libraries=${SOURCE}/lib --with-ogg-includes=${SOURCE}/include/ --enable-static --disable-shared
-        make -j$(nproc)
-        make install
+        # 编译libvorbis（Vorbis音频编码器）
+        echo '♻️ 开始编译 libvorbis'
+        cd ${COMPILED}/libvorbis-1.3.7 || { echo "❌ 找不到libvorbis源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --with-ogg-libraries=${SOURCE}/lib \
+            --with-ogg-includes=${SOURCE}/include/ \
+            --enable-static \
+            --disable-shared || { echo "❌ libvorbis配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ libvorbis编译失败"; exit 1; }
+        make install || { echo "❌ libvorbis安装失败"; exit 1; }
         sleep 1
 
-        # 编译libtheora
-        cd ${COMPILED}/libtheora-1.1.1 || exit 1
-        ./configure --prefix=${SOURCE} --disable-asm --with-ogg-libraries=${SOURCE}/lib --with-ogg-includes=${SOURCE}/include/ --with-vorbis-libraries=${SOURCE}/lib --with-vorbis-includes=${SOURCE}/include/ --enable-static --disable-shared
-        make -j$(nproc)
-        make install
+        # 编译libtheora（Theora视频编码器）
+        echo '♻️ 开始编译 libtheora'
+        cd ${COMPILED}/libtheora-1.1.1 || { echo "❌ 找不到libtheora源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-asm \
+            --with-ogg-libraries=${SOURCE}/lib \
+            --with-ogg-includes=${SOURCE}/include/ \
+            --with-vorbis-libraries=${SOURCE}/lib \
+            --with-vorbis-includes=${SOURCE}/include/ \
+            --enable-static \
+            --disable-shared || { echo "❌ libtheora配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ libtheora编译失败"; exit 1; }
+        make install || { echo "❌ libtheora安装失败"; exit 1; }
         sleep 1
 
-        echo '♻️ 开始编译 Vid-stab'
-
-        # 编译Vidstab
-        cd ${COMPILED}/vidstab-master || exit 1
-        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} -DLIBTYPE=STATIC -DBUILD_SHARED_LIBS=OFF -DUSE_OMP=OFF -DENABLE_SHARED=off .
-        make -j$(nproc)
-        make install
+        # 编译vid.stab（视频防抖库）
+        echo '♻️ 开始编译 vid.stab'
+        cd ${COMPILED}/vidstab-master || { echo "❌ 找不到vid.stab源码目录"; exit 1; }
+        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} \
+            -DLIBTYPE=STATIC \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DUSE_OMP=OFF \
+            -DENABLE_SHARED=off . || { echo "❌ vid.stab配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ vid.stab编译失败"; exit 1; }
+        make install || { echo "❌ vid.stab安装失败"; exit 1; }
         sleep 1
 
-        # 编译SNAPPY
-        cd ${COMPILED}/snappy || exit 1
-        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} -DENABLE_SHARED=OFF -DENABLE_CLI=OFF .
-        make -j$(nproc)
-        make install
+        # 编译Snappy（压缩库）
+        echo '♻️ 开始编译 Snappy'
+        cd ${COMPILED}/snappy || { echo "❌ 找不到Snappy源码目录"; exit 1; }
+        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_CLI=OFF . || { echo "❌ Snappy配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ Snappy编译失败"; exit 1; }
+        make install || { echo "❌ Snappy安装失败"; exit 1; }
 
+        # 编译OpenJPEG（JPEG 2000库）
         echo '♻️ 开始编译 OpenJPEG'
-
-        # 编译OpenJPEG
-        cd ${COMPILED}/openjpeg-2.5.0 || exit 1
-        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} -DENABLE_C_DEPS=ON -DLIBTYPE=STATIC -DENABLE_SHARED=OFF -DENABLE_STATIC=ON .
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/openjpeg-2.5.0 || { echo "❌ 找不到OpenJPEG源码目录"; exit 1; }
+        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} \
+            -DENABLE_C_DEPS=ON \
+            -DLIBTYPE=STATIC \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_STATIC=ON . || { echo "❌ OpenJPEG配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ OpenJPEG编译失败"; exit 1; }
+        make install || { echo "❌ OpenJPEG安装失败"; exit 1; }
+        # 清理可能残留的动态库
         rm ${SOURCE}/lib/libopenjp2.2.5.0.dy* 2>/dev/null
         rm ${SOURCE}/lib/libopenjp2.dy* 2>/dev/null
         rm ${SOURCE}/lib/libopenjp2.7.dy* 2>/dev/null
-
         sleep 1
 
+        # 编译AOM（AV1编码器）
         echo '♻️ 开始编译 AOM'
-
-        # 编译AOM
-        cd ${COMPILED}/aom || exit 1
-        mkdir -p aom_build
-        cd aom_build || exit 1
-        cmake ${COMPILED}/aom -DENABLE_TESTS=0 -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} -DLIBTYPE=STATIC -DAOM_TARGET_CPU=ARM64 -DCONFIG_RUNTIME_CPU_DETECT=0
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/aom || { echo "❌ 找不到AOM源码目录"; exit 1; }
+        mkdir -p aom_build || { echo "❌ 无法创建AOM构建目录"; exit 1; }
+        cd aom_build || { echo "❌ 进入AOM构建目录失败"; exit 1; }
+        cmake ${COMPILED}/aom \
+            -DENABLE_TESTS=0 \
+            -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} \
+            -DLIBTYPE=STATIC \
+            -DAOM_TARGET_CPU=ARM64 \
+            -DCONFIG_RUNTIME_CPU_DETECT=0 || { echo "❌ AOM配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ AOM编译失败"; exit 1; }
+        make install || { echo "❌ AOM安装失败"; exit 1; }
         sleep 1
 
+        # 编译libwebp（WebP图像库）
         echo '♻️ 开始编译 libwebp'
-
-        # 编译WEBP
-        cd ${COMPILED}/libwebp-1.1.0 || exit 1
-        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} -DENABLE_C_DEPS=ON -DLIBTYPE=STATIC -DENABLE_SHARED=OFF -DENABLE_STATIC=ON .
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/libwebp-1.1.0 || { echo "❌ 找不到libwebp源码目录"; exit 1; }
+        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} \
+            -DENABLE_C_DEPS=ON \
+            -DLIBTYPE=STATIC \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_STATIC=ON . || { echo "❌ libwebp配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ libwebp编译失败"; exit 1; }
+        make install || { echo "❌ libwebp安装失败"; exit 1; }
         sleep 1
 
+        # 编译zimg（图像缩放库）
         echo '♻️ 开始编译 zimg'
-        cd ${COMPILED}/zimg-release-3.0.2 || exit 1
-        ./autogen.sh
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/zimg-release-3.0.2 || { echo "❌ 找不到zimg源码目录"; exit 1; }
+        ./autogen.sh || { echo "❌ zimg自动生成配置失败"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static || { echo "❌ zimg配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ zimg编译失败"; exit 1; }
+        make install || { echo "❌ zimg安装失败"; exit 1; }
 
+        # 编译SVT-AV1（AV1编码器）
         echo '♻️ 开始编译 SVT-AV1'
-
-        # 编译SVT-AV1
-        cd ${COMPILED}/SVT-AV1-master || exit 1
-        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} -DCMAKE_BUILD_TYPE=Release -DBUILD_DEC=OFF -DBUILD_SHARED_LIBS=OFF -DLIBTYPE=STATIC -DENABLE_SHARED=OFF -DENABLE_STATIC=ON .
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/SVT-AV1-master || { echo "❌ 找不到SVT-AV1源码目录"; exit 1; }
+        cmake -DCMAKE_INSTALL_PREFIX:PATH=${SOURCE} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_DEC=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLIBTYPE=STATIC \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_STATIC=ON . || { echo "❌ SVT-AV1配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ SVT-AV1编译失败"; exit 1; }
+        make install || { echo "❌ SVT-AV1安装失败"; exit 1; }
         sleep 1
 
+        # 编译Kvazaar（HEVC编码器）
         echo '♻️ 开始编译 Kvazaar'
-
-        # 编译KVAZAAR
-        cd ${COMPILED}/kvazaar-2.2.0 || exit 1
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/kvazaar-2.2.0 || { echo "❌ 找不到Kvazaar源码目录"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static || { echo "❌ Kvazaar配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ Kvazaar编译失败"; exit 1; }
+        make install || { echo "❌ Kvazaar安装失败"; exit 1; }
         sleep 1
 
+        # 编译libudfread（UDF格式读取库）
         echo '♻️ 开始编译 libudfread'
-
-        # 编译libudfread
-        cd ${COMPILED}/libudfread || exit 1
-        ./bootstrap
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static
-        make -j$(nproc)
-        make install
+        cd ${COMPILED}/libudfread || { echo "❌ 找不到libudfread源码目录"; exit 1; }
+        ./bootstrap || { echo "❌ libudfread自动生成配置失败"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static || { echo "❌ libudfread配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ libudfread编译失败"; exit 1; }
+        make install || { echo "❌ libudfread安装失败"; exit 1; }
         sleep 1
 
+        # 编译libbluray（蓝光播放库）
         echo '♻️ 开始编译 libbluray'
+        cd ${COMPILED}/libbluray || { echo "❌ 找不到libbluray源码目录"; exit 1; }
+        ./bootstrap || { echo "❌ libbluray自动生成配置失败"; exit 1; }
+        ./configure --prefix=${SOURCE} \
+            --disable-shared \
+            --enable-static \
+            --disable-dependency-tracking \
+            --disable-silent-rules \
+            --without-libxml2 \
+            --without-freetype \
+            --disable-doxygen-doc \
+            --disable-bdjava-jar || { echo "❌ libbluray配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ libbluray编译失败"; exit 1; }
+        make install || { echo "❌ libbluray安装失败"; exit 1; }
 
-        # 编译libbluray
-        cd ${COMPILED}/libbluray || exit 1
-        ./bootstrap
-        ./configure --prefix=${SOURCE} --disable-shared --enable-static --disable-dependency-tracking --disable-silent-rules --without-libxml2 --without-freetype --disable-doxygen-doc --disable-bdjava-jar
-        make -j$(nproc)
-        make install
-
+        # 编译FFmpeg主程序
         echo '♻️ 开始编译 FFmpeg'
-
-        # 编译FFMPEG
-        cd ${COMPILED}/ffmpeg || exit 1
+        cd ${COMPILED}/ffmpeg || { echo "❌ 找不到FFmpeg源码目录"; exit 1; }
+        # 配置编译参数（链接所有依赖库）
         export LDFLAGS="-L${SOURCE}/lib"
         export CFLAGS="-I${SOURCE}/include"
-        export LDFLAGS="$LDFLAGS -framework VideoToolbox"
+        export LDFLAGS="$LDFLAGS -framework VideoToolbox"  # 启用macOS硬件加速
         ./configure \
-          --prefix=${SOURCE} \
-          --extra-cflags="-fno-stack-check" \
-          --arch=arm64 \
-          --cc=/usr/bin/clang \
-          --enable-gpl \
-          --enable-libbluray \
-          --enable-libopenjpeg \
-          --enable-libopus \
-          --enable-libmp3lame \
-          --enable-libx264 \
-          --enable-libx265 \
-          --enable-libvpx \
-          --enable-libwebp \
-          --enable-libass \
-          --enable-libfreetype \
-          --enable-fontconfig \
-          --enable-libtheora \
-          --enable-libvorbis \
-          --enable-libsnappy \
-          --enable-libaom \
-          --enable-libvidstab \
-          --enable-libzimg \
-          --enable-libsvtav1 \
-          --enable-libkvazaar \
-          --enable-libharfbuzz \
-          --pkg-config-flags=--static \
-          --enable-ffplay \
-          --enable-postproc \
-          --enable-neon \
-          --enable-runtime-cpudetect \
-          --disable-indev=qtkit \
-          --disable-indev=x11grab_xcb
-        make -j$(nproc)
-        make install
-        
-   
-    - name: Test built binaries
+            --prefix=${SOURCE} \
+            --extra-cflags="-fno-stack-check" \
+            --arch=arm64 \
+            --cc=/usr/bin/clang \
+            --enable-gpl \
+            --enable-libbluray \
+            --enable-libopenjpeg \
+            --enable-libopus \
+            --enable-libmp3lame \
+            --enable-libx264 \
+            --enable-libx265 \
+            --enable-libvpx \
+            --enable-libwebp \
+            --enable-libass \
+            --enable-libfreetype \
+            --enable-fontconfig \
+            --enable-libtheora \
+            --enable-libvorbis \
+            --enable-libsnappy \
+            --enable-libaom \
+            --enable-libvidstab \
+            --enable-libzimg \
+            --enable-libsvtav1 \
+            --enable-libkvazaar \
+            --enable-libharfbuzz \
+            --pkg-config-flags=--static \
+            --enable-ffplay \
+            --enable-postproc \
+            --enable-neon \
+            --enable-runtime-cpudetect \
+            --disable-indev=qtkit \
+            --disable-indev=x11grab_xcb || { echo "❌ FFmpeg配置失败"; exit 1; }
+        make -j$(nproc) || { echo "❌ FFmpeg编译失败"; exit 1; }
+        make install || { echo "❌ FFmpeg安装失败"; exit 1; }
+
+    - name: 测试编译结果
       run: |
-        # 二进制文件位于编译输出目录的bin文件夹
-        export BIN_DIR="./sw/bin"
+        # 二进制文件路径
+        export BIN_DIR="${GITHUB_WORKSPACE}/sw/bin"
+        
+        # 验证文件存在性
+        if [ ! -f "${BIN_DIR}/ffmpeg" ]; then
+            echo "❌ ffmpeg二进制文件不存在"
+            exit 1
+        fi
+        if [ ! -f "${BIN_DIR}/ffprobe" ]; then
+            echo "❌ ffprobe二进制文件不存在"
+            exit 1
+        fi
+        
+        # 输出版本信息
+        echo "📌 FFmpeg版本信息："
         ${BIN_DIR}/ffmpeg -version | head -1
         ${BIN_DIR}/ffprobe -version | head -1
+        
+        # 验证架构（确保为ARM64）
+        echo -e "\n📌 二进制文件架构："
         file ${BIN_DIR}/ffmpeg | head -1
         
-        # 测试VideoToolbox支持
-        ${BIN_DIR}/ffmpeg -hide_banner -encoders 2>/dev/null | grep -q videotoolbox && echo "✅ VideoToolbox acceleration available" || echo "❌ VideoToolbox acceleration missing"
+        # 测试VideoToolbox硬件加速支持
+        echo -e "\n📌 硬件加速检测："
+        if ${BIN_DIR}/ffmpeg -hide_banner -encoders 2>/dev/null | grep -q videotoolbox; then
+            echo "✅ VideoToolbox硬件加速已启用"
+        else
+            echo "❌ VideoToolbox硬件加速缺失"
+            exit 1
+        fi
         
         # 测试运动向量支持
-        ${BIN_DIR}/ffmpeg -hide_banner -filters 2>/dev/null | grep -q codecview && echo "✅ Motion vectors support available" || echo "❌ Motion vectors support missing"
+        echo -e "\n📌 功能检测："
+        if ${BIN_DIR}/ffmpeg -hide_banner -filters 2>/dev/null | grep -q codecview; then
+            echo "✅ 运动向量支持已启用"
+        else
+            echo "❌ 运动向量支持缺失"
+            exit 1
+        fi
         
-        echo "✅ Binary tests completed"
-        
-    - name: Package binaries
+        echo -e "\n✅ 所有测试通过"
+
+    - name: 打包二进制文件
       run: |
-        mkdir -p release
-        # 从编译输出目录复制二进制文件
-        cp ./sw/bin/ffmpeg release/
-        cp ./sw/bin/ffprobe release/
-        cp ./sw/bin/ffplay release/ 2>/dev/null || true
+        # 创建发布目录
+        mkdir -p release || { echo "❌ 无法创建发布目录"; exit 1; }
         
-        cd release
-        tar -czf ../ffmpeg-apple-silicon-native-${{ github.ref_name }}.tar.gz *
+        # 复制二进制文件
+        cp ${GITHUB_WORKSPACE}/sw/bin/ffmpeg release/ || { echo "❌ 复制ffmpeg失败"; exit 1; }
+        cp ${GITHUB_WORKSPACE}/sw/bin/ffprobe release/ || { echo "❌ 复制ffprobe失败"; exit 1; }
+        cp ${GITHUB_WORKSPACE}/sw/bin/ffplay release/ 2>/dev/null || echo "⚠️ ffplay未找到，跳过复制"
+        
+        # 打包为tar.gz（包含分支名）
+        cd release || { echo "❌ 进入发布目录失败"; exit 1; }
+        tar -czf ../ffmpeg-apple-silicon-native-${{ github.ref_name }}.tar.gz * || { echo "❌ 打包失败"; exit 1; }
         cd ..
         
         # 生成校验和
-        shasum -a 256 ffmpeg-apple-silicon-native-${{ github.ref_name }}.tar.gz > checksums.txt
+        shasum -a 256 ffmpeg-apple-silicon-native-${{ github.ref_name }}.tar.gz > checksums.txt || { echo "❌ 生成校验和失败"; exit 1; }
         
-        echo "✅ Binaries packaged successfully"
-        
-    - name: Upload artifacts
+        echo "✅ 二进制文件打包完成"
+
+    - name: 上传构建产物
       uses: actions/upload-artifact@v4
       with:
         name: ffmpeg-apple-silicon-native
         path: |
           ffmpeg-apple-silicon-native-*.tar.gz
           checksums.txt
+        retention-days: 30  # 产物保留30天
