@@ -1,0 +1,147 @@
+name: Build Native FFmpeg for Apple Silicon
+
+on:
+  push:
+    branches: [ main ]  # For development testing
+  workflow_dispatch:
+
+jobs:
+  build-native:
+    runs-on: macos-14  # Apple Silicon runner
+    timeout-minutes: 180  # 3 hours max
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Cache Homebrew packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          /opt/homebrew/Cellar
+          /opt/homebrew/lib
+          /opt/homebrew/include
+          /opt/homebrew/bin
+        key: ${{ runner.os }}-homebrew-${{ hashFiles('.github/workflows/build-macos-native.yml') }}
+        restore-keys: |
+          ${{ runner.os }}-homebrew-
+          
+    - name: Cache FFmpeg source
+      uses: actions/cache@v4
+      with:
+        path: ffmpeg-src
+        key: ffmpeg-source-${{ hashFiles('.github/workflows/build-macos-native.yml') }}-${{ github.run_number }}
+        restore-keys: |
+          ffmpeg-source-${{ hashFiles('.github/workflows/build-macos-native.yml') }}-
+          ffmpeg-source-
+      
+    - name: Install dependencies
+      run: |
+        # Update brew and install build dependencies (quiet mode)
+        brew update > /dev/null 2>&1
+        brew install --quiet pkg-config nasm yasm cmake autoconf automake libtool
+        
+        # Install codec libraries (quiet mode)
+        brew install --quiet x264 x265 lame opus libvorbis libvpx webp fdk-aac freetype fontconfig
+        
+        # Link any unlinked packages (suppress output)
+        brew link --overwrite nasm yasm autoconf automake libtool x264 x265 lame opus libvorbis libvpx webp fdk-aac > /dev/null 2>&1 || true
+        
+        # Basic verification (silent)
+        HOMEBREW_PREFIX=$(brew --prefix)
+        export PKG_CONFIG_PATH="$HOMEBREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+        pkg-config --exists x264 && pkg-config --exists x265 # Verify key libraries
+        
+        echo "✅ Build dependencies installed"
+        
+    - name: Download FFmpeg source
+      run: |
+        set +x  # Disable command echoing
+        if [ ! -d "ffmpeg-src" ]; then
+          curl -L "https://ffmpeg.org/releases/ffmpeg-snapshot.tar.bz2" -o ffmpeg.tar.bz2
+          tar -xjf ffmpeg.tar.bz2
+          mv ffmpeg ffmpeg-src
+          rm ffmpeg.tar.bz2
+          echo "✅ FFmpeg source downloaded"
+        else
+          echo "✅ FFmpeg source restored from cache"
+        fi
+        
+    - name: Configure FFmpeg for Apple Silicon
+      working-directory: ffmpeg-src
+      run: |
+        # Debug: Test basic compilation first
+        echo "Testing basic compilation..."
+        echo 'int main(){return 0;}' > test.c
+        gcc test.c -o test && echo "✅ Basic gcc works" || echo "❌ Basic gcc fails"
+        rm -f test.c test
+        
+        echo "Testing minimal FFmpeg configure..."
+        # Try minimal configure first
+        ./configure \
+          --prefix=/usr/local \
+          --target-os=darwin \
+          --enable-videotoolbox \
+          --enable-avfilter \
+          --disable-shared \
+          --enable-static
+          
+        if [ $? -eq 0 ]; then
+          echo "✅ Minimal configure succeeded"
+        else
+          echo "❌ Even minimal configure failed, trying with --enable-cross-compile"
+          ./configure \
+            --prefix=/usr/local \
+            --target-os=darwin \
+            --enable-cross-compile \
+            --enable-videotoolbox \
+            --enable-avfilter \
+            --disable-shared \
+            --enable-static
+        fi
+        echo "✅ FFmpeg configured for Apple Silicon"
+        
+    - name: Build FFmpeg
+      working-directory: ffmpeg-src
+      run: |
+        make -j$(sysctl -n hw.ncpu) 2>/dev/null
+        echo "✅ FFmpeg built successfully"
+        
+    - name: Test built binaries
+      working-directory: ffmpeg-src
+      run: |
+        ./ffmpeg -version | head -1
+        ./ffprobe -version | head -1
+        file ./ffmpeg | head -1
+        
+        # Test VideoToolbox support (silent)
+        ./ffmpeg -hide_banner -encoders 2>/dev/null | grep -q videotoolbox && echo "✅ VideoToolbox acceleration available"
+        
+        # Test motion vectors support (silent)  
+        ./ffmpeg -hide_banner -filters 2>/dev/null | grep -q codecview && echo "✅ Motion vectors support available"
+        
+        echo "✅ Binary tests completed"
+        
+    - name: Package binaries
+      run: |
+        mkdir -p release
+        cp ffmpeg-src/ffmpeg release/
+        cp ffmpeg-src/ffprobe release/
+        cp ffmpeg-src/ffplay release/ 2>/dev/null || true
+        
+        cd release
+        tar -czf ../ffmpeg-apple-silicon-native-${{ github.ref_name }}.tar.gz *
+        cd ..
+        
+        # Generate checksums
+        shasum -a 256 ffmpeg-apple-silicon-native-${{ github.ref_name }}.tar.gz > checksums.txt
+        
+        echo "✅ Binaries packaged successfully"
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ffmpeg-apple-silicon-native
+        path: |
+          ffmpeg-apple-silicon-native-*.tar.gz
+          checksums.txt 
