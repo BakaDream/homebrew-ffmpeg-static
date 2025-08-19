@@ -1,94 +1,135 @@
-name: Build FFmpeg macOS arm64 with deps
+name: Static FFmpeg Build for macOS arm64
 
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  build:
+  build-ffmpeg:
     runs-on: macos-14
-
-    env:
-      PREFIX: ${{ github.workspace }}/build
-      PKG_CONFIG_PATH: ${{ github.workspace }}/build/lib/pkgconfig
-      PATH: ${{ github.workspace }}/build/bin:$PATH
-
+    name: Build Static FFmpeg with Dependencies
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build tools
+      - name: Install base dependencies
         run: |
-          brew install yasm nasm cmake pkg-config automake autoconf libtool
+          brew install automake autoconf libtool pkg-config yasm nasm cmake sdl2
 
-      # Build x264
+      - name: Set up build directories
+        run: |
+          mkdir -p ~/ffmpeg_sources ~/ffmpeg_build ~/bin
+          echo "~/bin" >> $GITHUB_PATH
+
       - name: Build x264
         run: |
+          cd ~/ffmpeg_sources
           git clone --depth 1 https://code.videolan.org/videolan/x264.git
           cd x264
-          ./configure --prefix=$PREFIX --enable-static --disable-cli --host=arm-apple-darwin
-          make -j$(sysctl -n hw.logicalcpu)
+          ./configure --prefix="$HOME/ffmpeg_build" --bindir="$HOME/bin" \
+            --enable-static --disable-shared --enable-pic
+          make -j$(sysctl -n hw.ncpu)
           make install
 
-      # Build x265
       - name: Build x265
         run: |
-          git clone --branch stable --depth 1 https://bitbucket.org/multicoreware/x265_git.git
-          cd x265/build
-          cmake -G "Unix Makefiles" \
-            -DCMAKE_INSTALL_PREFIX=$PREFIX \
-            -DENABLE_SHARED=OFF \
-            -DENABLE_CLI=OFF \
-            ../source
-          make -j$(sysctl -n hw.logicalcpu)
+          cd ~/ffmpeg_sources
+          git clone --depth 1 https://bitbucket.org/multicoreware/x265_git.git
+          cd x265_git/build/linux
+          cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX="$HOME/ffmpeg_build" \
+            -DENABLE_SHARED=OFF -DENABLE_STATIC=ON ../../source
+          make -j$(sysctl -n hw.ncpu)
           make install
 
-      # Build fdk-aac
       - name: Build fdk-aac
         run: |
+          cd ~/ffmpeg_sources
           git clone --depth 1 https://github.com/mstorsjo/fdk-aac.git
           cd fdk-aac
           autoreconf -fiv
-          ./configure --prefix=$PREFIX --enable-static --disable-shared
-          make -j$(sysctl -n hw.logicalcpu)
+          ./configure --prefix="$HOME/ffmpeg_build" --enable-static --disable-shared
+          make -j$(sysctl -n hw.ncpu)
           make install
 
-      # Build opus
       - name: Build opus
         run: |
+          cd ~/ffmpeg_sources
           git clone --depth 1 https://github.com/xiph/opus.git
           cd opus
-          ./autogen.sh
-          ./configure --prefix=$PREFIX --enable-static --disable-shared
-          make -j$(sysctl -n hw.logicalcpu)
+          autoreconf -fiv
+          ./configure --prefix="$HOME/ffmpeg_build" --enable-static --disable-shared --enable-pic
+          make -j$(sysctl -n hw.ncpu)
           make install
 
-      # Build ffmpeg
-      - name: Download and build ffmpeg
+      - name: Build vorbis
         run: |
-          curl -L https://ffmpeg.org/releases/ffmpeg-6.1.1.tar.gz -o ffmpeg.tar.gz
-          tar xzf ffmpeg.tar.gz
-          cd ffmpeg-6.1.1
+          cd ~/ffmpeg_sources
+          git clone --depth 1 https://github.com/xiph/vorbis.git
+          cd vorbis
+          autoreconf -fiv
+          ./configure --prefix="$HOME/ffmpeg_build" --enable-static --disable-shared
+          make -j$(sysctl -n hw.ncpu)
+          make install
+
+      - name: Build FFmpeg
+        run: |
+          cd ~/ffmpeg_sources
+          git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git
+          cd FFmpeg
           ./configure \
-            --prefix=$PREFIX \
+            --prefix="$HOME/ffmpeg_build" \
+            --bindir="$HOME/bin" \
             --pkg-config-flags="--static" \
-            --extra-cflags="-I$PREFIX/include" \
-            --extra-ldflags="-L$PREFIX/lib -static" \
-            --enable-gpl --enable-nonfree \
-            --enable-static --disable-shared \
-            --enable-libx264 --enable-libx265 \
-            --enable-libfdk-aac --enable-libopus
-          make -j$(sysctl -n hw.logicalcpu)
+            --extra-cflags="-I$HOME/ffmpeg_build/include" \
+            --extra-ldflags="-L$HOME/ffmpeg_build/lib" \
+            --extra-libs="-lpthread -lm" \
+            --ld="ld64" \
+            --enable-static \
+            --disable-shared \
+            --disable-programs \
+            --enable-ffmpeg \
+            --enable-ffprobe \
+            --enable-ffplay \
+            --enable-gpl \
+            --enable-libfdk-aac \
+            --enable-libopus \
+            --enable-libvorbis \
+            --enable-libx264 \
+            --enable-libx265 \
+            --enable-nonfree \
+            --enable-sdl2
+          make -j$(sysctl -n hw.ncpu)
           make install
+          hash -r
 
-      - name: Package ffmpeg
+      - name: Verify built binaries
         run: |
-          cd $PREFIX
-          /usr/bin/tar czf $GITHUB_WORKSPACE/ffmpeg-macos-arm64-full.tar.gz bin
+          ffmpeg -version
+          ffprobe -version
+          ffplay -version
+          otool -L ~/bin/ffmpeg | grep -v /System && echo "Static build check failed!" && exit 1 || echo "Static build check passed"
 
-      - name: Upload artifact
+      - name: Package binaries
+        run: |
+          mkdir -p ffmpeg-macos-arm64
+          cp ~/bin/ffmpeg ffmpeg-macos-arm64/
+          cp ~/bin/ffprobe ffmpeg-macos-arm64/
+          cp ~/bin/ffplay ffmpeg-macos-arm64/
+          cp LICENSE ffmpeg-macos-arm64/ 2>/dev/null || true
+          tar -czvf ffmpeg-macos-arm64-static.tar.gz ffmpeg-macos-arm64
+
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-macos-arm64-full
-          path: ffmpeg-macos-arm64-full.tar.gz
+          name: ffmpeg-macos-arm64-static
+          path: ffmpeg-macos-arm64-static.tar.gz
+          retention-days: 14
+
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ffmpeg-macos-arm64-static.tar.gz
