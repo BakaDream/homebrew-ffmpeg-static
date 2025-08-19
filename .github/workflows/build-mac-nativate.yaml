@@ -79,18 +79,15 @@ jobs:
         echo "Testing minimal FFmpeg configure..."
         # Try minimal configure first
         ./configure \
-          --prefix=/usr/local \
-          --target-os=darwin \
-          --enable-videotoolbox \
-          --enable-avfilter \
-          --disable-shared \
-          --enable-static \
-          --disable-xlib \
-          --disable-xcb \
-          --disable-xcb-shm \
-          --disable-xcb-shape \
-          --disable-xcb-xfixes \
-          --disable-indev=x11grab
+        --prefix=/usr/local \
+        --enable-videotoolbox \
+        --enable-avfilter \
+        --disable-shared \
+        --enable-static \
+        --disable-libfontconfig \
+        --enable-libfreetype \
+        --extra-cflags="-I$(brew --prefix freetype)/include/freetype2" \
+        --extra-ldflags="-L$(brew --prefix freetype)/lib"
           
 
         echo "✅ FFmpeg configured for Apple Silicon"
