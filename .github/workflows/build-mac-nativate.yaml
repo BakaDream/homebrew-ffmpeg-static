@@ -84,19 +84,6 @@ jobs:
           --enable-videotoolbox \
           --enable-avfilter \
           --disable-shared \
-          --enable-static
-          
-        if [ $? -eq 0 ]; then
-          echo "✅ Minimal configure succeeded"
-        else
-          echo "❌ Even minimal configure failed, trying with --enable-cross-compile"
-          ./configure \
-          --prefix=/usr/local \
-          --target-os=darwin \
-          --enable-cross-compile \
-          --enable-videotoolbox \
-          --enable-avfilter \
-          --disable-shared \
           --enable-static \
           --disable-xlib \
           --disable-xcb \
@@ -104,8 +91,8 @@ jobs:
           --disable-xcb-shape \
           --disable-xcb-xfixes \
           --disable-indev=x11grab
+          
 
-        fi
         echo "✅ FFmpeg configured for Apple Silicon"
         
     - name: Build FFmpeg
